@@ -142,9 +142,26 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 # CORS MIDDLEWARE
 # ============================================
 # This allows your React frontend to talk to the backend
+
+# Determine allowed origins:
+# - If CORS_ORIGINS env var is set (comma-separated), use that
+# - Otherwise, fall back to localhost defaults for development
+default_cors_origins = [
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:5173",
+]
+
+cors_env = settings.CORS_ORIGINS.strip() if isinstance(settings.CORS_ORIGINS, str) else ""
+if cors_env:
+    allow_origins = [origin.strip() for origin in cors_env.split(",") if origin.strip()]
+else:
+    allow_origins = default_cors_origins
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,  # From config.py
+    allow_origins=allow_origins,
     allow_credentials=True,                # Allow cookies/auth
     allow_methods=["*"],                   # Allow all HTTP methods (GET, POST, etc.)
     allow_headers=["*"],                   # Allow all headers

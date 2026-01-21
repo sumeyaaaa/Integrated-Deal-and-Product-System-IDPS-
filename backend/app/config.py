@@ -26,24 +26,11 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     
     # CORS (Cross-Origin Resource Sharing)
-    # This allows the React frontend (running on different port) to talk to the backend
-    # Can be set via CORS_ORIGINS env var (comma-separated) or defaults to localhost
-    # Example: CORS_ORIGINS="http://localhost:5173,https://your-app.vercel.app"
-    def _get_cors_origins() -> List[str]:
-        """Get CORS origins from env var or use defaults."""
-        cors_env = os.getenv("CORS_ORIGINS", "")
-        if cors_env:
-            # Split by comma and strip whitespace
-            return [origin.strip() for origin in cors_env.split(",") if origin.strip()]
-        # Default to localhost for development
-        return [
-            "http://localhost:3000",  # React dev server
-            "http://localhost:5173",  # Vite dev server (alternative)
-            "http://127.0.0.1:3000",
-            "http://127.0.0.1:5173",
-        ]
-    
-    CORS_ORIGINS: List[str] = _get_cors_origins()
+    # This allows the React frontend (running on different port) to talk to the backend.
+    # Can be set via CORS_ORIGINS env var as a simple comma-separated string, e.g.:
+    # CORS_ORIGINS="http://localhost:5173,https://your-app.vercel.app"
+    # We keep it as a string here to avoid Pydantic parsing issues, and split it in main.py.
+    CORS_ORIGINS: str = ""
     
     # Supabase Configuration
     # These connect us to your Supabase database
