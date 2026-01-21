@@ -37,6 +37,15 @@ class ChemicalTypeCreate(ChemicalTypeBase):
     pass
 
 
+class ChemicalTypeUpdate(BaseModel):
+    name: Optional[str] = None
+    category: Optional[str] = None
+    hs_code: Optional[str] = None
+    applications: Optional[List[str]] = None
+    spec_template: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
 class ChemicalType(ChemicalTypeBase):
     id: UUID
     created_at: Optional[datetime] = None
@@ -66,6 +75,16 @@ class TdsCreate(TdsBase):
     pass
 
 
+class TdsUpdate(BaseModel):
+    chemical_type_id: Optional[UUID] = None
+    brand: Optional[str] = None
+    grade: Optional[str] = None
+    owner: Optional[str] = None
+    source: Optional[str] = None
+    specs: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
 class Tds(TdsBase):
     id: UUID
     created_at: Optional[datetime] = None
@@ -90,6 +109,12 @@ class PartnerBase(BaseModel):
 
 class PartnerCreate(PartnerBase):
     pass
+
+
+class PartnerUpdate(BaseModel):
+    partner: Optional[str] = None
+    partner_country: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
 
 
 class Partner(PartnerBase):
@@ -122,6 +147,16 @@ class LeanchemProductCreate(LeanchemProductBase):
     pass
 
 
+class LeanchemProductUpdate(BaseModel):
+    tds_id: Optional[UUID] = None
+    category: Optional[str] = None
+    product_type: Optional[str] = None
+    sample_addis: Optional[Dict[str, Any]] = None
+    stock_addis: Optional[Dict[str, Any]] = None
+    stock_nairobi: Optional[Dict[str, Any]] = None
+    prices: Optional[Dict[str, Any]] = None
+
+
 class LeanchemProduct(LeanchemProductBase):
     id: UUID
     created_at: Optional[datetime] = None
@@ -146,6 +181,12 @@ class CostingPricingBase(BaseModel):
 
 class CostingPricingCreate(CostingPricingBase):
     pass
+
+
+class CostingPricingUpdate(BaseModel):
+    partner_id: Optional[UUID] = None
+    tds_id: Optional[UUID] = None
+    rows: Optional[List[Dict[str, Any]]] = None
 
 
 class CostingPricing(CostingPricingBase):

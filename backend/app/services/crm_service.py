@@ -16,6 +16,7 @@ from datetime import datetime
 import json
 import re
 import tempfile
+import logging
 from pathlib import Path
 
 from supabase import Client
@@ -108,7 +109,7 @@ def get_all_customers(
             .limit(limit)
             .offset(offset)
             .execute()
-        )
+    )
 
     return [Customer(**row) for row in (response.data or [])]
 
@@ -289,7 +290,7 @@ def update_customer(customer_id: str, customer_update: CustomerUpdate) -> Custom
     
     if not response.data:
         raise RuntimeError("Failed to update customer")
-    
+
     return Customer(**response.data[0])
 
 
@@ -327,13 +328,25 @@ def build_customer_profile(customer_id: str, user_id: Optional[str] = None) -> C
         raise RuntimeError("Customer not found")
     
     # Step 1: Search relevant documents and memories (RAG)
-    relevant_docs = search_documents(customer.customer_name, user_id=user_id, limit=3)
+    try:
+        relevant_docs = search_documents(customer.customer_name, user_id=user_id, limit=3)
+    except Exception as e:
+        logging.warning(f"Document search failed: {str(e)}")
+        relevant_docs = []
     
     # Step 2: Search web for company information
-    web_context = search_web_for_company(customer.customer_name)
+    try:
+        web_context = search_web_for_company(customer.customer_name)
+    except Exception as e:
+        logging.warning(f"Web search failed: {str(e)}")
+        web_context = ""
     
     # Step 3: Search for LinkedIn profiles in Ethiopia
-    linkedin_context = search_linkedin_profiles_ethiopia(customer.customer_name)
+    try:
+        linkedin_context = search_linkedin_profiles_ethiopia(customer.customer_name)
+    except Exception as e:
+        logging.warning(f"LinkedIn search failed: {str(e)}")
+        linkedin_context = ""
     
     # Step 4: Combine all context
     context = ""
@@ -353,10 +366,10 @@ def build_customer_profile(customer_id: str, user_id: Optional[str] = None) -> C
     # Step 5: Fetch unique categories from chemical_types table (dynamically)
     try:
         categories_list = get_all_categories()
-    except Exception:
-        categories_list = ["Cement", "Dry-Mix", "Admixtures", "Paint & Coatings"]
-    
-    if not categories_list:
+        if not categories_list:
+            categories_list = ["Cement", "Dry-Mix", "Admixtures", "Paint & Coatings"]
+    except Exception as e:
+        logging.warning(f"Failed to fetch categories: {str(e)}. Using defaults.")
         categories_list = ["Cement", "Dry-Mix", "Admixtures", "Paint & Coatings"]
     
     # Build category list for prompt (normalize keys for JSON: lowercase, underscores)
@@ -449,7 +462,7 @@ Source
 
 Extract only real individuals verified via LinkedIn or company websites.
 
-🧩 Research Inputs
+ Research Inputs
 LeanChem Offerings
 
 Dry-Mix/Plaster: RDP, HPMC, Starch Ether, Fiber, Zinc Stearate, Plasticizer, Defoamer, SBR, Acrylic Waterproofing, White Cement, Iron Oxide, Titanium Dioxide
@@ -507,7 +520,14 @@ Use the exact category names as keys (lowercase, underscores for spaces)."""
     ]
     
     # Step 8: Get AI response
-    profile_text = gemini_chat(messages)
+    try:
+        profile_text = gemini_chat(messages)
+        if not profile_text or not profile_text.strip():
+            raise RuntimeError("AI service returned empty response. Please check GEMINI_API_KEY configuration.")
+    except Exception as e:
+        error_msg = f"Failed to generate AI profile: {str(e)}"
+        logging.error(error_msg)
+        raise RuntimeError(error_msg)
     
     # Step 8.5: Post-process to remove any markdown that slipped through
     # Remove markdown tables (aggressive cleanup)
@@ -1221,6 +1241,15 @@ def generate_quote_excel(body: QuoteDraftRequest) -> str:
         ws["L30"] = f"=SUM(L{start_row}:L{last_product_row})*0.15"
         ws["L31"] = f"=SUM(L{start_row}:L30)"
 
+        # Write terms and conditions to B34 for Baracoda
+        # Use provided terms or default
+        terms_text = body.terms_and_conditions or "Terms and conditions:\nMinium Order Quantity: 1000 KG Per Product\nPayment: Advance Payment is 50% 30% when goods are delivered at Moyale and & Balance Payment is 20% on Delivery."
+        cell = ws["B34"]
+        cell.value = terms_text
+        # Enable text wrapping for multi-line content
+        from openpyxl.styles import Alignment
+        cell.alignment = Alignment(wrap_text=True, vertical="top")
+
     elif fmt == "betchem":
         # Betchem format
         ws["A4"] = body.customer_name
@@ -1245,6 +1274,15 @@ def generate_quote_excel(body: QuoteDraftRequest) -> str:
         ws["F13"] = "=F12*0.15"
         # F14 = total including VAT
         ws["F14"] = "=F12+F13"
+
+        # Write terms and conditions to A16 for Betchem
+        # Use provided terms or default
+        terms_text = body.terms_and_conditions or "Terms and conditions:\n- For items currently in stock, the advance payment is 100 %"
+        cell = ws["A16"]
+        cell.value = terms_text
+        # Enable text wrapping for multi-line content
+        from openpyxl.styles import Alignment
+        cell.alignment = Alignment(wrap_text=True, vertical="top")
 
     # 5) Save to a temporary file and return its path
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=f"_{filename}")

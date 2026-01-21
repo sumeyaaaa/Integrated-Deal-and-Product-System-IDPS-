@@ -7,7 +7,11 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
-
+SYSTEM_REPORT.md
+SALES_PIPELINE_IMPLEMENTATION_PLAN.md
+VERCEL_SETUP.md
+tds_files
+DEPLOYMENT.md
 # Node.js
 node_modules/
 npm-debug.log*

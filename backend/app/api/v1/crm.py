@@ -13,10 +13,12 @@ Example:
 - PUT  /api/v1/crm/interactions/{id}         → update interaction
 - DELETE /api/v1/crm/interactions/{id}       → delete interaction
 """
-from fastapi import APIRouter, HTTPException, Depends, Query, Response, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, Depends, Query, Response, UploadFile, File, Form, Request
 from fastapi.responses import FileResponse
+from fastapi.exceptions import RequestValidationError
 from typing import Optional
 from pathlib import Path
+import logging
 
 from app.models.crm import (
     Customer,
@@ -91,7 +93,7 @@ async def list_customers(
                 all_filtered = get_all_customers(limit=10000, offset=0, start_date=start_date, end_date=end_date)
                 total = len(all_filtered)
             else:
-                total = get_customers_count()
+                total = get_customers_count()  # crm-selam
 
         return CustomerListResponse(customers=customers, total=total)
     except Exception as e:
@@ -228,9 +230,13 @@ async def build_profile_endpoint(
         )
         return updated_customer
     except RuntimeError as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        import traceback
+        error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+        raise HTTPException(status_code=500, detail=error_detail)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error building profile: {str(e)}")
+        import traceback
+        error_detail = f"Error building profile: {str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+        raise HTTPException(status_code=500, detail=error_detail)
 
 
 @router.post("/customers/{customer_id}/auto-fill-sales-stage", response_model=Customer)
@@ -396,8 +402,9 @@ async def delete_customer_interaction(
     status_code=201,
 )
 async def chat_with_customer_endpoint(
+    request: Request,
     customer_id: str,
-    input_text: str = Form(...),
+    input_text: Optional[str] = Form(None),
     tds_id: Optional[str] = Form(None),
     file: Optional[UploadFile] = File(None),
     # user: dict = Depends(get_current_user)  # Uncomment when auth is ready
@@ -405,14 +412,42 @@ async def chat_with_customer_endpoint(
     """
     Run one AI chat turn for a given customer with optional file upload.
 
-    - Accepts file uploads (PDF, Word, Excel, etc.)
+    - Accepts JSON (application/json) or FormData (multipart/form-data)
+    - Accepts file uploads (PDF, Word, Excel, etc.) via FormData only
     - Uploads file to Supabase storage bucket "attached_FILES"
     - Extracts text from the file
     - Includes file content in AI analysis
     - Stores the turn in `interactions` with file_url
     - Logs a combined Q/A entry in `conversation` (RAG) with embedding
     """
+    logger = logging.getLogger(__name__)
+    
     from app.services.file_service import upload_file_to_supabase, extract_text_from_file
+    
+    # Handle both JSON and FormData requests
+    content_type = request.headers.get("content-type", "").lower()
+    
+    # If JSON request, parse from body
+    if "application/json" in content_type:
+        try:
+            body = await request.json()
+            input_text = body.get("input_text") or input_text
+            tds_id = body.get("tds_id") or tds_id
+            # Note: Can't send files via JSON, so file will remain None
+        except Exception as e:
+            logger.error(f"Error parsing JSON body: {e}")
+            raise HTTPException(status_code=400, detail=f"Invalid JSON body: {str(e)}")
+    
+    # Validate input
+    if not input_text or not input_text.strip():
+        raise HTTPException(status_code=400, detail="input_text cannot be empty")
+    
+    # Log received data for debugging
+    logger.info(f"Chat endpoint called for customer {customer_id}")
+    logger.info(f"Content-Type: {content_type}")
+    logger.info(f"Received input_text: {input_text[:100] if input_text else 'None'}")
+    logger.info(f"Received tds_id: {tds_id}")
+    logger.info(f"Received file: {file.filename if file else 'None'}")
     
     # Validate customer exists
     customer = get_customer_by_id(customer_id)

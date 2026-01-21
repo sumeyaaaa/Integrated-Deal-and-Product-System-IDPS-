@@ -7,10 +7,13 @@ Think of it as:
 - Where all your API routes are registered
 - Where middleware (like CORS) is configured
 """
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 import os
+import logging
 from dotenv import load_dotenv
 
 # Import our configuration
@@ -20,8 +23,8 @@ from app.config import settings
 from app.database.connection import get_supabase_client
 
 # Import API routers
-from app.api.v1 import crm, pms
-# from app.api.v1 import auth, common  # We'll add these later
+from app.api.v1 import crm, pms, sales_pipeline, stock, auth
+# from app.api.v1 import common  # We'll add this later
 
 # Load environment variables
 load_dotenv()
@@ -44,16 +47,16 @@ async def lifespan(app: FastAPI):
     - Clean up resources
     """
     # STARTUP - Runs when server starts
-    print("🚀 Starting LeanChem Connect API...")
-    print(f"📋 App: {settings.APP_NAME}")
-    print(f"🔢 Version: {settings.APP_VERSION}")
+    print("Starting LeanChem Connect API...")
+    print(f"App: {settings.APP_NAME}")
+    print(f"Version: {settings.APP_VERSION}")
     
     # Test database connection
     try:
         supabase = get_supabase_client()
-        print("✅ Database connection successful")
+        print("Database connection successful")
     except Exception as e:
-        print(f"❌ Database connection failed: {e}")
+        print(f"Database connection failed: {e}")
     
     # You can add more startup tasks here:
     # - Initialize notification service
@@ -63,7 +66,7 @@ async def lifespan(app: FastAPI):
     yield  # Server runs here
     
     # SHUTDOWN - Runs when server stops
-    print("🛑 Shutting down LeanChem Connect API...")
+    print("Shutting down LeanChem Connect API...")
     # Clean up tasks here:
     # - Close database connections
     # - Stop background workers
@@ -79,6 +82,61 @@ app = FastAPI(
     redoc_url="/api/redoc",    # ReDoc at http://localhost:8000/api/redoc
     lifespan=lifespan          # Use our startup/shutdown function
 )
+
+# ============================================
+# EXCEPTION HANDLERS
+# ============================================
+# Better error messages for validation errors
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Log validation errors for debugging."""
+    logger = logging.getLogger(__name__)
+    try:
+        body = await request.body()
+        body_str = str(body)[:500] if body else "No body"
+    except Exception:
+        body_str = "Could not read body"
+    
+    error_details = {
+        "path": request.url.path,
+        "errors": exc.errors(),
+        "content_type": request.headers.get("content-type", "Not set"),
+        "body_preview": body_str
+    }
+    
+    logger.error(f"Validation error: {error_details}")
+    print(f"\nVALIDATION ERROR on {request.url.path}")
+    print(f"   Content-Type: {request.headers.get('content-type', 'Not set')}")
+    print(f"   Errors: {exc.errors()}")
+    print(f"   Body preview: {body_str}\n")
+    
+    # Convert errors to JSON-serializable format
+    errors = []
+    for error in exc.errors():
+        error_dict = {
+            "type": error.get("type"),
+            "loc": error.get("loc"),
+            "msg": error.get("msg"),
+            "input": error.get("input"),
+        }
+        # Handle ctx if it exists and contains an error object
+        if "ctx" in error and error["ctx"]:
+            ctx = error["ctx"].copy()
+            if "error" in ctx:
+                # Convert ValueError or other exceptions to string
+                if isinstance(ctx["error"], Exception):
+                    ctx["error"] = str(ctx["error"])
+            error_dict["ctx"] = ctx
+        errors.append(error_dict)
+    
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": errors,
+            "body_preview": body_str,
+            "content_type": request.headers.get("content-type", "Not set")
+        }
+    )
 
 # ============================================
 # CORS MIDDLEWARE
@@ -135,8 +193,16 @@ app.include_router(crm.router, prefix="/api/v1/crm", tags=["CRM"])
 # Register PMS routes
 app.include_router(pms.router, prefix="/api/v1/pms", tags=["PMS"])
 
+# Register Sales Pipeline routes
+app.include_router(sales_pipeline.router, prefix="/api/v1", tags=["Sales Pipeline"])
+
+# Register Stock Management routes
+app.include_router(stock.router, prefix="/api/v1", tags=["Stock Management"])
+
+# Register Authentication routes
+app.include_router(auth.router, prefix="/api/v1", tags=["Authentication"])
+
 # We'll add these later:
-# app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])
 # app.include_router(common.router, prefix="/api/v1", tags=["Common"])
 
 # ============================================

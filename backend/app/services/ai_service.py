@@ -4,8 +4,7 @@ AI Service - Gemini Integration and RAG Helpers
 
 This module centralizes all AI-related logic for the backend:
 - Chat completion with Gemini (text in → text out)
-- Text embeddings with Gemini (for RAG tables like `documents` / `conversation`)
-
+- Text embeddings with Gemini (for RAG tables like `documents` 
 By keeping this in one place we can:
 - Swap providers later (OpenAI, Groq, etc.) without touching API routes
 - Re-use the same logic from CRM, PMS, and analytics endpoints

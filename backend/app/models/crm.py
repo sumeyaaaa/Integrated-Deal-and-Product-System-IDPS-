@@ -154,6 +154,7 @@ class QuoteDraftRequest(BaseModel):
     delivery_terms: Optional[str] = None
     incoterms: Optional[str] = None
     notes: Optional[str] = None
+    terms_and_conditions: Optional[str] = None
     products: List[QuoteProductLine]
     linked_customer_id: Optional[UUID] = None
 

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useNavigate } from "react-router-dom";
 import {
   api,
   Customer,
@@ -7,8 +7,13 @@ import {
   InteractionListResponse,
   CustomerChatRequest,
   InteractionUpdate,
+  fetchSalesPipelines,
+  SalesPipeline,
+  PipelineStage,
+  fetchTDS,
+  Tds,
 } from "../../services/api";
-import { ChevronDown, ChevronUp, Edit2, Trash2, X, Save, Calendar, Paperclip } from "lucide-react";
+import { ChevronDown, ChevronUp, Edit2, Trash2, X, Save, Calendar, Paperclip, TrendingUp, Plus, Package, DollarSign } from "lucide-react";
 
 export function CustomerDetailPage() {
   const { customerId } = useParams<{ customerId: string }>();
@@ -34,6 +39,12 @@ export function CustomerDetailPage() {
   const [editResponse, setEditResponse] = useState("");
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
+
+  // Sales Pipeline state
+  const [pipelines, setPipelines] = useState<SalesPipeline[]>([]);
+  const [loadingPipelines, setLoadingPipelines] = useState(false);
+  const [tdsList, setTdsList] = useState<Tds[]>([]);
+  const navigate = useNavigate();
 
   // Calculate date 15 days ago as default
   useEffect(() => {
@@ -76,8 +87,37 @@ export function CustomerDetailPage() {
     }
   }
 
+  async function fetchPipelines() {
+    if (!customerId) return;
+    try {
+      setLoadingPipelines(true);
+      const res = await fetchSalesPipelines({
+        customer_id: customerId,
+        limit: 100,
+      });
+      setPipelines(res.pipelines);
+    } catch (err: any) {
+      console.error("Failed to load pipelines:", err);
+    } finally {
+      setLoadingPipelines(false);
+    }
+  }
+
+  useEffect(() => {
+    async function loadTDS() {
+      try {
+        const res = await fetchTDS({ limit: 500 });
+        setTdsList(res.tds);
+      } catch (err) {
+        console.error("Failed to load TDS:", err);
+      }
+    }
+    loadTDS();
+  }, []);
+
   useEffect(() => {
     fetchCustomerAndInteractions();
+    fetchPipelines();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customerId, startDate, endDate]);
 
@@ -97,22 +137,26 @@ export function CustomerDetailPage() {
         formData.append("file", selectedFile);
       }
 
+      // Don't set Content-Type manually - axios will set it with boundary for FormData
       const res = await api.post<Interaction>(
         `/crm/customers/${customerId}/chat`,
-        formData,
-        {
-          headers: {
-            "Content-Type": "multipart/form-data",
-          },
-        }
+        formData
       );
 
       setInteractions((prev) => [res.data, ...prev]);
       setChatInput("");
       setSelectedFile(null);
     } catch (err: any) {
-      console.error(err);
-      setChatError(err?.response?.data?.detail ?? err?.message ?? "Chat failed");
+      console.error("Chat error:", err);
+      console.error("Error response:", err?.response?.data);
+      console.error("Error details:", JSON.stringify(err?.response?.data, null, 2));
+      setChatError(
+        err?.response?.data?.detail 
+          ? (Array.isArray(err.response.data.detail) 
+              ? JSON.stringify(err.response.data.detail, null, 2)
+              : err.response.data.detail)
+          : err?.message ?? "Chat failed"
+      );
     } finally {
       setChatLoading(false);
       setUploadingFile(false);
@@ -204,6 +248,63 @@ export function CustomerDetailPage() {
     return text.substring(0, maxLength) + "...";
   }
 
+  function getTdsName(tdsId: string | null | undefined): string {
+    if (!tdsId) return "—";
+    const tds = tdsList.find((t) => t.id === tdsId);
+    return tds ? `${tds.brand || ""} ${tds.grade || ""}`.trim() || tdsId : tdsId;
+  }
+
+  function formatCurrency(amount: number | null | undefined): string {
+    if (!amount) return "—";
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: "USD",
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).format(amount);
+  }
+
+  function formatDate(dateString: string | null | undefined): string {
+    if (!dateString) return "—";
+    return new Date(dateString).toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+  }
+
+  // Calculate stage distribution
+  const stageDistribution: Record<PipelineStage, number> = {
+    Lead: 0,
+    "Product Identified": 0,
+    "Quote Sent": 0,
+    "Sample Requested": 0,
+    "Sample Delivered": 0,
+    "Agreement in Review": 0,
+    "PO Received": 0,
+    Invoiced: 0,
+    Delivered: 0,
+    "Closed Won": 0,
+    "Closed Lost": 0,
+  };
+  pipelines.forEach((p) => {
+    stageDistribution[p.stage] = (stageDistribution[p.stage] || 0) + 1;
+  });
+
+  const STAGE_COLORS: Record<PipelineStage, string> = {
+    Lead: "bg-slate-100 text-slate-700 border-slate-300",
+    "Product Identified": "bg-blue-100 text-blue-700 border-blue-300",
+    "Quote Sent": "bg-purple-100 text-purple-700 border-purple-300",
+    "Sample Requested": "bg-yellow-100 text-yellow-700 border-yellow-300",
+    "Sample Delivered": "bg-orange-100 text-orange-700 border-orange-300",
+    "Agreement in Review": "bg-indigo-100 text-indigo-700 border-indigo-300",
+    "PO Received": "bg-green-100 text-green-700 border-green-300",
+    Invoiced: "bg-teal-100 text-teal-700 border-teal-300",
+    Delivered: "bg-emerald-100 text-emerald-700 border-emerald-300",
+    "Closed Won": "bg-green-500 text-white border-green-600",
+    "Closed Lost": "bg-red-100 text-red-700 border-red-300",
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-100 flex items-center justify-center">
@@ -219,18 +320,18 @@ export function CustomerDetailPage() {
       <div className="min-h-screen bg-slate-100 flex items-center justify-center">
         <div className="max-w-md w-full mx-4 rounded-2xl border border-rose-200 bg-white shadow-lg p-6 text-center space-y-4">
           <h2 className="text-lg font-semibold text-rose-600">
-            {error ?? "Customer not found"}
+          {error ?? "Customer not found"}
           </h2>
           <p className="text-sm text-slate-600">
             The requested customer could not be loaded. It may have been deleted or the link is invalid.
           </p>
           <div className="flex items-center justify-center gap-3 pt-2">
-            <Link
-              to="/crm/customers"
+        <Link
+          to="/crm/customers"
               className="inline-flex items-center px-4 py-2 rounded-full border border-slate-300 text-slate-700 text-sm font-medium hover:bg-slate-100 transition-colors"
-            >
+        >
               ← Back to customers
-            </Link>
+        </Link>
           </div>
         </div>
       </div>
@@ -242,7 +343,7 @@ export function CustomerDetailPage() {
       {/* Subtle gradient header background */}
       <div className="w-full bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 text-slate-50 shadow-md">
         <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 lg:py-7 space-y-6">
-        {/* Header */}
+      {/* Header */}
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
           <div className="space-y-2">
             <p className="inline-flex items-center text-xs font-medium uppercase tracking-[0.25em] text-slate-400">
@@ -259,11 +360,11 @@ export function CustomerDetailPage() {
               <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-900/80 px-3 py-1 border border-slate-700/60">
                 <span className="text-xs text-slate-400">Display ID</span>
                 <span className="font-mono text-xs text-slate-100">
-                  {customer.display_id ?? "—"}
-                </span>
+              {customer.display_id ?? "—"}
+            </span>
               </span>
             </div>
-          </div>
+        </div>
 
           <div className="flex flex-wrap items-center gap-3 justify-start lg:justify-end">
             {interactions.some(
@@ -285,12 +386,12 @@ export function CustomerDetailPage() {
             >
               Manage Customers
             </Link>
-            <Link
-              to="/crm/customers"
+        <Link
+          to="/crm/customers"
               className="inline-flex items-center gap-2 rounded-full border border-slate-700/80 px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-900 transition-colors"
-            >
-              Back to list
-            </Link>
+        >
+          Back to list
+        </Link>
           </div>
         </div>
         </main>
@@ -322,9 +423,9 @@ export function CustomerDetailPage() {
 
               <form onSubmit={handleChatSubmit} className="space-y-3">
                 <div className="relative">
-                  <textarea
-                    value={chatInput}
-                    onChange={(e) => setChatInput(e.target.value)}
+          <textarea
+            value={chatInput}
+            onChange={(e) => setChatInput(e.target.value)}
                     placeholder="Ask the assistant to suggest next steps, qualify the opportunity, or propose a product mix..."
                     rows={4}
                     className="w-full rounded-xl border border-slate-300 bg-slate-50 px-3.5 py-3 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/70 focus:border-blue-500/70 resize-y"
@@ -382,23 +483,23 @@ export function CustomerDetailPage() {
                   >
                     View previous interactions ↓
                   </button>
-                  <button
-                    type="submit"
-                    disabled={chatLoading || !chatInput.trim()}
+            <button
+              type="submit"
+              disabled={chatLoading || !chatInput.trim()}
                     className="inline-flex items-center justify-center gap-2 rounded-full bg-blue-500 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-blue-500/30 hover:bg-blue-400 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
                   >
                     {uploadingFile ? "Uploading & Analyzing..." : chatLoading ? "Thinking..." : "Send to AI"}
-                  </button>
-                </div>
-              </form>
+            </button>
+          </div>
+        </form>
 
-              {chatError && (
+        {chatError && (
                 <div className="mt-2 rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-100">
-                  {chatError}
-                </div>
-              )}
+            {chatError}
+          </div>
+        )}
             </div>
-          </section>
+      </section>
 
           {/* Interactions Card */}
           <section
@@ -456,7 +557,7 @@ export function CustomerDetailPage() {
             </div>
 
             <div className="p-4 sm:p-5 space-y-3 max-h-[70vh] overflow-y-auto">
-              {interactions.length === 0 ? (
+        {interactions.length === 0 ? (
                 <p className="text-sm text-slate-400">
                   No interactions yet. Ask the AI assistant a question to create the
                   first interaction.
@@ -486,11 +587,11 @@ export function CustomerDetailPage() {
                           <div className="flex-1 min-w-0">
                             <div className="flex flex-wrap items-center gap-2 mb-1">
                               <span className="text-[11px] font-medium text-slate-400">
-                                {it.created_at
-                                  ? new Date(it.created_at).toLocaleString()
+                    {it.created_at
+                      ? new Date(it.created_at).toLocaleString()
                                   : "—"}
-                              </span>
-                              {it.tds_id && (
+                  </span>
+                  {it.tds_id && (
                                 <span className="inline-flex items-center rounded-full bg-blue-500/15 px-2 py-0.5 text-[11px] font-medium text-blue-300 border border-blue-500/30">
                                   Linked product
                                 </span>
@@ -560,15 +661,15 @@ export function CustomerDetailPage() {
                                 ) : (
                                   <ChevronDown size={16} />
                                 )}
-                              </span>
-                            )}
-                          </div>
+                    </span>
+                  )}
+                </div>
                         </div>
 
                         {/* Expanded view */}
                         {isExpanded && !isEditing && (
                           <div className="px-4 pb-4 pt-1 space-y-4">
-                            {it.input_text && (
+                {it.input_text && (
                               <div className="space-y-1.5">
                                 <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
                                   Your Question / Input
@@ -576,9 +677,9 @@ export function CustomerDetailPage() {
                                 <div className="rounded-lg bg-slate-900/80 border border-slate-700/70 px-3 py-2.5 text-xs sm:text-sm text-slate-100 whitespace-pre-wrap">
                                   {it.input_text}
                                 </div>
-                              </div>
-                            )}
-                            {it.ai_response && (
+                  </div>
+                )}
+                {it.ai_response && (
                               <div className="space-y-1.5">
                                 <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
                                   AI Recommendation
@@ -636,16 +737,149 @@ export function CustomerDetailPage() {
                                 {saving ? "Saving..." : "Save Changes"}
                               </button>
                             </div>
-                          </div>
-                        )}
+                  </div>
+                )}
                       </div>
                     );
                   })}
                 </div>
               )}
             </div>
-          </section>
+      </section>
         </div>
+
+        {/* Sales Pipeline Section */}
+        <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-200 px-6 py-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-base font-semibold text-slate-900 flex items-center gap-2">
+                  <TrendingUp className="w-5 h-5 text-emerald-600" />
+                  Sales Pipeline
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Track deals and opportunities for this customer.
+                </p>
+              </div>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => navigate(`/sales/pipeline?customer=${customerId}`)}
+                  className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-emerald-500/30 hover:shadow-emerald-500/50 transition-all"
+                >
+                  <Plus size={16} />
+                  Add Pipeline
+                </button>
+                <Link
+                  to="/sales/pipeline"
+                  className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+                >
+                  View All
+                </Link>
+              </div>
+            </div>
+          </div>
+
+          <div className="p-6">
+            {loadingPipelines ? (
+              <div className="text-center py-8">
+                <div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-emerald-600"></div>
+                <p className="text-sm text-slate-500 mt-2">Loading pipelines...</p>
+              </div>
+            ) : pipelines.length === 0 ? (
+              <div className="text-center py-8">
+                <TrendingUp className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+                <p className="text-sm text-slate-500 mb-4">No pipeline records yet.</p>
+                <button
+                  onClick={() => navigate(`/sales/pipeline?customer=${customerId}`)}
+                  className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 transition-colors"
+                >
+                  <Plus size={16} />
+                  Create First Pipeline
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {/* Stage Summary */}
+                <div className="bg-slate-50 rounded-lg p-4 border border-slate-200">
+                  <h3 className="text-xs font-semibold text-slate-700 mb-3 uppercase tracking-wide">
+                    Stage Summary
+                  </h3>
+                  <div className="flex flex-wrap gap-2">
+                    {Object.entries(stageDistribution)
+                      .filter(([_, count]) => count > 0)
+                      .map(([stage, count]) => (
+                        <span
+                          key={stage}
+                          className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border ${
+                            STAGE_COLORS[stage as PipelineStage]
+                          }`}
+                        >
+                          {stage}: {count}
+                        </span>
+                      ))}
+                  </div>
+                </div>
+
+                {/* Pipeline List */}
+                <div className="space-y-3">
+                  {pipelines.slice(0, 5).map((pipeline) => (
+                    <div
+                      key={pipeline.id}
+                      onClick={() => navigate(`/sales/pipeline?pipeline=${pipeline.id}`)}
+                      className="rounded-lg border border-slate-200 bg-white p-4 hover:border-emerald-300 hover:shadow-md transition-all cursor-pointer"
+                    >
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-2">
+                            <Package className="w-4 h-4 text-slate-400" />
+                            <span className="text-sm font-medium text-slate-900">
+                              {getTdsName(pipeline.tds_id)}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-3 flex-wrap">
+                            <span
+                              className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold border ${
+                                STAGE_COLORS[pipeline.stage]
+                              }`}
+                            >
+                              {pipeline.stage}
+                            </span>
+                            {pipeline.amount && (
+                              <div className="flex items-center gap-1 text-sm text-slate-600">
+                                <DollarSign className="w-4 h-4" />
+                                <span className="font-medium">
+                                  {formatCurrency(pipeline.amount)}
+                                </span>
+                              </div>
+                            )}
+                            {pipeline.expected_close_date && (
+                              <div className="flex items-center gap-1 text-sm text-slate-600">
+                                <Calendar className="w-4 h-4" />
+                                <span>{formatDate(pipeline.expected_close_date)}</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        <ChevronRight className="w-5 h-5 text-slate-400 flex-shrink-0" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {pipelines.length > 5 && (
+                  <div className="pt-2 border-t border-slate-200">
+                    <Link
+                      to={`/sales/pipeline?customer=${customerId}`}
+                      className="text-sm text-emerald-600 hover:text-emerald-700 font-medium"
+                    >
+                      View all {pipelines.length} pipeline records →
+                    </Link>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </section>
       </main>
     </div>
   );

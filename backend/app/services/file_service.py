@@ -102,6 +102,60 @@ def upload_file_to_supabase(
         raise RuntimeError(f"Failed to upload file to Supabase: {str(e)}")
 
 
+def upload_tds_file_to_supabase(
+    file_content: bytes,
+    filename: str,
+    tds_id: str,
+    bucket_name: str = "product-documents",
+) -> Tuple[str, str]:
+    """
+    Upload a TDS file to Supabase storage bucket with proper structure.
+    
+    Files are stored as: tds_files/{tds_id}/{uuid}.{ext}
+    
+    Args:
+        file_content: File content as bytes
+        filename: Original filename
+        tds_id: TDS record ID
+        bucket_name: Supabase storage bucket name (default: "product-documents")
+    
+    Returns:
+        Tuple of (file_url, file_type)
+    """
+    # Ensure bucket exists before uploading
+    ensure_bucket_exists(bucket_name, is_public=True)
+    
+    # Generate file key: tds_files/{tds_id}/{uuid}.{ext}
+    file_ext = Path(filename).suffix
+    unique_filename = f"{uuid4()}{file_ext}"
+    file_key = f"tds_files/{tds_id}/{unique_filename}"
+    
+    # Determine content type
+    content_type, _ = mimetypes.guess_type(filename)
+    if not content_type:
+        content_type = "application/octet-stream"
+    
+    # Upload to Supabase storage
+    try:
+        # Use service client for storage operations (needs admin access)
+        from app.database.connection import get_supabase_service_client
+        storage_client = get_supabase_service_client()
+        
+        response = storage_client.storage.from_(bucket_name).upload(
+            file_key,
+            file_content,
+            file_options={"content-type": content_type, "upsert": "false"}
+        )
+        
+        # Get public URL - construct it from Supabase URL
+        supabase_url = settings.SUPABASE_URL.rstrip("/")
+        file_url = f"{supabase_url}/storage/v1/object/public/{bucket_name}/{file_key}"
+        
+        return file_url, content_type
+    except Exception as e:
+        raise RuntimeError(f"Failed to upload TDS file to Supabase: {str(e)}")
+
+
 def extract_text_from_file(file_content: bytes, filename: str, content_type: str) -> str:
     """
     Extract text content from various file types.

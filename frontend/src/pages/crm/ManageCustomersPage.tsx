@@ -20,12 +20,18 @@ export function ManageCustomersPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [limit, setLimit] = useState(1000); // Max limit allowed by backend is 1000
+  const [offset, setOffset] = useState(0);
 
   // Add customer state
   const [showAddForm, setShowAddForm] = useState(false);
   const [newCustomerName, setNewCustomerName] = useState("");
   const [newDisplayId, setNewDisplayId] = useState("");
   const [adding, setAdding] = useState(false);
+  
+  // Build profile state
+  const [buildingProfile, setBuildingProfile] = useState<string | null>(null);
+  const [profileError, setProfileError] = useState<string | null>(null);
 
   // Edit customer state
   const [editingCustomer, setEditingCustomer] = useState<string | null>(null);
@@ -36,16 +42,26 @@ export function ManageCustomersPage() {
   
   // Auto-fill sales stage state (per customer)
   const [autoFilling, setAutoFilling] = useState<string | null>(null);
+  
 
   // Delete customer state
   const [deleting, setDeleting] = useState<string | null>(null);
 
-  async function fetchCustomers(query?: string) {
+  async function fetchCustomers(query?: string, newOffset?: number, newLimit?: number) {
     try {
       setLoading(true);
       setError(null);
 
-      const params: Record<string, string | number> = { limit: 50, offset: 0 };
+      const currentLimit = newLimit ?? limit;
+      const currentOffset = newOffset ?? offset;
+      
+      // Cap limit at 1000 to avoid backend validation errors
+      const safeLimit = Math.min(currentLimit, 1000);
+      
+      const params: Record<string, string | number> = { 
+        limit: safeLimit, 
+        offset: currentOffset 
+      };
       if (query && query.trim().length > 0) {
         params.q = query.trim();
       }
@@ -55,9 +71,40 @@ export function ManageCustomersPage() {
       });
       setCustomers(res.data.customers);
       setTotal(res.data.total);
+      setOffset(currentOffset);
+      setLimit(safeLimit);
     } catch (err: any) {
       console.error(err);
-      setError(err?.message ?? "Failed to load customers");
+      // Handle validation errors (422) from FastAPI
+      let errorMessage = "Failed to load customers";
+      if (err?.response?.status === 422) {
+        const validationErrors = err?.response?.data?.detail;
+        if (Array.isArray(validationErrors)) {
+          errorMessage = validationErrors.map((e: any) => {
+            if (typeof e === "string") return e;
+            if (typeof e === "object" && e !== null) {
+              return e.msg || e.message || JSON.stringify(e);
+            }
+            return String(e);
+          }).join(", ");
+        } else if (typeof validationErrors === "string") {
+          errorMessage = validationErrors;
+        } else if (validationErrors && typeof validationErrors === "object") {
+          errorMessage = validationErrors.msg || validationErrors.message || JSON.stringify(validationErrors);
+        } else {
+          errorMessage = "Validation error: Invalid request parameters (limit must be ≤ 1000)";
+        }
+      } else {
+        const detail = err?.response?.data?.detail;
+        if (typeof detail === "string") {
+          errorMessage = detail;
+        } else if (detail && typeof detail === "object") {
+          errorMessage = detail.msg || detail.message || JSON.stringify(detail);
+        } else {
+          errorMessage = err?.message || "Failed to load customers";
+        }
+      }
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }
@@ -81,6 +128,7 @@ export function ManageCustomersPage() {
 
     try {
       setAdding(true);
+      setProfileError(null);
       const res = await api.post<Customer>("/crm/customers", {
         customer_name: newCustomerName.trim(),
         display_id: newDisplayId.trim() || undefined,
@@ -91,11 +139,67 @@ export function ManageCustomersPage() {
       setNewCustomerName("");
       setNewDisplayId("");
       setShowAddForm(false);
+      
+      // Automatically auto-fill sales stage after creating customer
+      try {
+        setAutoFilling(res.data.customer_id);
+        console.log("Auto-filling sales stage for customer:", res.data.customer_id);
+        const stageRes = await api.post<Customer>(`/crm/customers/${res.data.customer_id}/auto-fill-sales-stage`);
+        console.log("Auto-fill sales stage response:", stageRes.data);
+        // Update the customer in the list with the new sales stage
+        setCustomers((prev) =>
+          prev.map((c) => (c.customer_id === res.data.customer_id ? stageRes.data : c))
+        );
+      } catch (stageErr: any) {
+        console.error("Auto-fill sales stage error:", stageErr);
+        console.error("Error details:", stageErr?.response?.data);
+        // Don't show alert if it fails - it's automatic, but log it
+      } finally {
+        setAutoFilling(null);
+      }
+      
+      // Automatically build profile after creating customer (silently in background)
+      handleBuildProfile(res.data.customer_id).catch(err => {
+        console.error("Profile building failed:", err);
+        // Silently fail - don't show error to user
+      });
     } catch (err: any) {
       console.error(err);
       alert(err?.response?.data?.detail ?? err?.message ?? "Failed to create customer");
     } finally {
       setAdding(false);
+    }
+  }
+
+  async function handleBuildProfile(customerId: string) {
+    try {
+      setBuildingProfile(customerId);
+      setProfileError(null);
+      console.log("Building profile for customer:", customerId);
+      const res = await api.post<Customer>(`/crm/customers/${customerId}/build-profile`);
+      console.log("Profile build response:", res.data);
+      // Update the customer in the list with the new profile data
+      setCustomers((prev) =>
+        prev.map((c) => (c.customer_id === customerId ? res.data : c))
+      );
+      // Don't show alert if called automatically after creation
+      if (!adding) {
+        alert("Profile built successfully! The profile has been saved as an interaction.");
+      }
+    } catch (err: any) {
+      console.error("Profile build error:", err);
+      console.error("Error response:", err?.response?.data);
+      const msg =
+        err?.response?.data?.detail ??
+        err?.message ??
+        "Failed to build profile.";
+      setProfileError(msg);
+      // Only show alert if not called automatically (user clicked button manually)
+      if (!adding) {
+        alert(msg);
+      }
+    } finally {
+      setBuildingProfile(null);
     }
   }
 
@@ -178,27 +282,29 @@ export function ManageCustomersPage() {
             Add, edit, and delete customers. Search by customer name.
           </p>
         </div>
-        <div style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}>
+        <div style={{ display: "flex", gap: "0.75rem", alignItems: "center", flexWrap: "wrap" }}>
           {!showAddForm ? (
-            <button
-              type="button"
-              onClick={() => setShowAddForm(true)}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "0.5rem",
-                padding: "0.75rem 1.5rem",
-                backgroundColor: "#2563eb",
-                color: "white",
-                border: "none",
-                borderRadius: "0.5rem",
-                fontWeight: "600",
-                cursor: "pointer",
-              }}
-            >
-              <Plus size={18} />
-              Add Customer
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => setShowAddForm(true)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.5rem",
+                  padding: "0.75rem 1.5rem",
+                  backgroundColor: "#2563eb",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "0.5rem",
+                  fontWeight: "600",
+                  cursor: "pointer",
+                }}
+              >
+                <Plus size={18} />
+                Add Customer
+              </button>
+            </>
           ) : (
             <button
               type="button"
@@ -321,11 +427,67 @@ export function ManageCustomersPage() {
 
       {loading && <div className="info-banner">Loading customers...</div>}
       {error && <div className="error-banner">{error}</div>}
+      {profileError && <div className="error-banner">{profileError}</div>}
+      {adding && buildingProfile && (
+        <div className="info-banner">
+          Creating customer and building AI profile... This may take a moment.
+        </div>
+      )}
 
       {/* Customers List */}
       <section className="card">
-        <div style={{ marginBottom: "1rem", fontSize: "0.875rem", color: "#6b7280" }}>
-          Showing {customers.length} / {total} customers
+        <div style={{ marginBottom: "1rem", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "1rem" }}>
+          <div style={{ fontSize: "0.875rem", color: "#6b7280" }}>
+            Showing {customers.length} / {total} customers
+            {customers.length < total && (
+              <span style={{ marginLeft: "0.5rem", color: "#ef4444" }}>
+                (Limited to {limit} - increase limit to see more)
+              </span>
+            )}
+          </div>
+          {total > limit && (
+            <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+              <button
+                type="button"
+                onClick={() => {
+                  const newLimit = limit + 500;
+                  fetchCustomers(search, 0, newLimit);
+                }}
+                disabled={loading}
+                style={{
+                  padding: "0.5rem 1rem",
+                  backgroundColor: "#2563eb",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "0.5rem",
+                  fontSize: "0.875rem",
+                  fontWeight: "600",
+                  cursor: loading ? "not-allowed" : "pointer",
+                }}
+              >
+                Load More (+500)
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  fetchCustomers(search, 0, 1000);
+                }}
+                disabled={loading}
+                style={{
+                  padding: "0.5rem 1rem",
+                  backgroundColor: "#10b981",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "0.5rem",
+                  fontSize: "0.875rem",
+                  fontWeight: "600",
+                  cursor: loading ? "not-allowed" : "pointer",
+                }}
+              >
+                Load All (Max 1000)
+              </button>
+            </div>
+          )}
         </div>
         {customers.length === 0 && !loading ? (
           <p className="muted">No customers found.</p>
@@ -399,6 +561,37 @@ export function ManageCustomersPage() {
                             fontSize: "1rem",
                           }}
                         />
+                      </div>
+                      <div style={{ marginBottom: "1.5rem" }}>
+                        <label
+                          style={{
+                            display: "block",
+                            fontSize: "0.875rem",
+                            fontWeight: "600",
+                            color: "#374151",
+                            marginBottom: "0.5rem",
+                          }}
+                        >
+                          Sales Stage
+                        </label>
+                        <select
+                          value={editSalesStage}
+                          onChange={(e) => setEditSalesStage(e.target.value)}
+                          style={{
+                            width: "100%",
+                            padding: "0.75rem",
+                            border: "1px solid #d1d5db",
+                            borderRadius: "0.5rem",
+                            fontSize: "1rem",
+                            backgroundColor: "white",
+                          }}
+                        >
+                          {Object.entries(SALES_STAGES).map(([key, value]) => (
+                            <option key={key} value={key}>
+                              {key} - {value}
+                            </option>
+                          ))}
+                        </select>
                       </div>
                       <div
                         style={{
@@ -511,30 +704,6 @@ export function ManageCustomersPage() {
                           flexWrap: "wrap",
                         }}
                       >
-                        {!customer.sales_stage && (
-                          <button
-                            type="button"
-                            onClick={() => handleAutoFillSalesStage(customer.customer_id)}
-                            disabled={autoFilling === customer.customer_id}
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: "0.5rem",
-                              padding: "0.5rem 1rem",
-                              backgroundColor: "#10b981",
-                              color: "white",
-                              border: "none",
-                              borderRadius: "0.5rem",
-                              fontSize: "0.875rem",
-                              fontWeight: "600",
-                              cursor: autoFilling === customer.customer_id ? "not-allowed" : "pointer",
-                              opacity: autoFilling === customer.customer_id ? 0.6 : 1,
-                            }}
-                          >
-                            <Sparkles size={14} />
-                            {autoFilling === customer.customer_id ? "Analyzing..." : "Auto-Fill Stage"}
-                          </button>
-                        )}
                         <Link
                           to={`/crm/customers/${customer.customer_id}`}
                           style={{
@@ -595,6 +764,12 @@ export function ManageCustomersPage() {
           </div>
         )}
       </section>
+
+      <style>{`
+        @keyframes spin {
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
     </div>
   );
 }
