@@ -4,6 +4,12 @@ import { supabase } from "../lib/supabase";
 import { EmployeeRole, getPermissionsForRole } from "../utils/permissions";
 import { checkEmployeeStatus as checkEmployeeStatusAPI } from "../services/api";
 
+// Frontend base URL for auth redirects (magic links, password reset, etc.)
+// In production, set VITE_FRONTEND_URL to your Vercel URL.
+// In development, you can leave it unset and it will fall back to window.location.origin.
+const FRONTEND_URL =
+  import.meta.env.VITE_FRONTEND_URL || window.location.origin;
+
 interface EmployeeData {
   email: string;
   role: EmployeeRole;
@@ -174,7 +180,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const { error } = await supabase.auth.signInWithOtp({
         email,
         options: {
-          emailRedirectTo: `${window.location.origin}/auth/callback?type=setup`,
+          emailRedirectTo: `${FRONTEND_URL}/auth/callback?type=setup`,
         },
       });
 
@@ -202,7 +208,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       // Send password reset email
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${window.location.origin}/auth/callback?type=reset`,
+        redirectTo: `${FRONTEND_URL}/auth/callback?type=reset`,
       });
 
       if (error) {
