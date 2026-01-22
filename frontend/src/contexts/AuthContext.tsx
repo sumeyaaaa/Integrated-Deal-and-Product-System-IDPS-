@@ -86,11 +86,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setEmployeeRole(employeeInfo.role);
           setEmployeeData(employeeInfo);
         } else {
+          // Don't auto-sign out on employee check failure - might be network error
+          // Let the user see an error message instead
+          console.warn("⚠️ Employee check failed - user may not be registered or API error");
           setIsEmployee(false);
           setEmployeeRole(null);
           setEmployeeData(null);
-          // If user is authenticated but not an employee, sign them out
-          await supabase.auth.signOut();
+          // Don't sign out immediately - might be a temporary network issue
         }
       } else {
         setIsEmployee(false);
@@ -113,11 +115,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setEmployeeRole(employeeInfo.role);
           setEmployeeData(employeeInfo);
         } else {
+          // Don't auto-sign out on employee check failure - might be network error
+          // Let the user see an error message instead
+          console.warn("⚠️ Employee check failed - user may not be registered or API error");
           setIsEmployee(false);
           setEmployeeRole(null);
           setEmployeeData(null);
-          // If user is authenticated but not an employee, sign them out
-          await supabase.auth.signOut();
+          // Don't sign out immediately - might be a temporary network issue
         }
       } else {
         setIsEmployee(false);
