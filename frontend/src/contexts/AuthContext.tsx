@@ -6,9 +6,10 @@ import { checkEmployeeStatus as checkEmployeeStatusAPI } from "../services/api";
 
 // Frontend base URL for auth redirects (magic links, password reset, etc.)
 // In production, set VITE_FRONTEND_URL to your Vercel URL.
-// In development, you can leave it unset and it will fall back to window.location.origin.
+// In development, it will fall back to window.location.origin.
+// IMPORTANT: VITE_FRONTEND_URL must be set in Vercel environment variables for production!
 const FRONTEND_URL =
-  import.meta.env.VITE_FRONTEND_URL || window.location.origin;
+  import.meta.env.VITE_FRONTEND_URL?.trim() || window.location.origin;
 
 interface EmployeeData {
   email: string;
