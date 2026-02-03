@@ -766,39 +766,47 @@ def get_template_path(form_type: str = "Baracoda") -> str:
     # __file__ is backend/app/services/quotation_service.py
     # parent.parent.parent.parent goes: services -> app -> backend -> project root
     current_dir = Path(__file__).parent.parent.parent.parent
-    template_path = current_dir / "qoute_format" / "PFI Sample Baracodda (2).xlsx"
     
-    # Convert to absolute path and normalize
-    template_path = template_path.resolve()
-    
-    # Select template based on form type
+    # Select template filename based on form type
+    template_filename = "PFI Sample Baracodda (2).xlsx"
     if form_type == "Nyumb-Chem":
-        template_path = current_dir / "qoute_format" / "nyumbchem PFI Template.xlsx"
-        template_path = template_path.resolve()
+        template_filename = "nyumbchem PFI Template.xlsx"
     elif form_type == "Bet-chem":
-        template_path = current_dir / "qoute_format" / "betchem pfi TEMPLATE.xlsx"
-        template_path = template_path.resolve()
+        template_filename = "betchem pfi TEMPLATE.xlsx"
+    
+    # Build template path and resolve to absolute path
+    template_path = current_dir / "qoute_format" / template_filename
+    template_path = template_path.resolve()
     
     if not template_path.exists():
         # Try alternative paths
+        alt_paths = []
+        
         # Try relative to current working directory
-        alt_path1 = Path("qoute_format") / "PFI Sample Baracodda (2).xlsx"
-        if alt_path1.exists():
-            return str(alt_path1.resolve())
+        alt_path1 = Path("qoute_format") / template_filename
+        alt_paths.append(alt_path1)
         
         # Try from backend directory
-        alt_path2 = Path(__file__).parent.parent.parent / "qoute_format" / "PFI Sample Baracodda (2).xlsx"
-        if alt_path2.exists():
-            return str(alt_path2.resolve())
+        alt_path2 = Path(__file__).parent.parent.parent / "qoute_format" / template_filename
+        alt_paths.append(alt_path2)
         
+        # Try from project root (one level up from backend)
+        alt_path3 = Path(__file__).parent.parent.parent.parent / "qoute_format" / template_filename
+        alt_paths.append(alt_path3)
+        
+        # Check each alternative path
+        for alt_path in alt_paths:
+            if alt_path.exists():
+                return str(alt_path.resolve())
+        
+        # If none found, raise error with all tried paths
+        tried_paths = [str(template_path)] + [str(p.resolve()) if p.exists() else f"NOT FOUND: {p}" for p in alt_paths]
         raise FileNotFoundError(
-            f"Template file not found at: {template_path}\n"
+            f"Template file not found for form_type '{form_type}'\n"
+            f"Looking for: {template_filename}\n"
             f"Current working directory: {os.getcwd()}\n"
             f"Service file location: {Path(__file__).resolve()}\n"
-            f"Tried paths:\n"
-            f"  1. {template_path}\n"
-            f"  2. {alt_path1.resolve() if alt_path1.exists() else 'NOT FOUND'}\n"
-            f"  3. {alt_path2.resolve() if alt_path2.exists() else 'NOT FOUND'}\n"
+            f"Tried paths:\n" + "\n".join(f"  {i+1}. {path}" for i, path in enumerate(tried_paths)) + "\n"
             f"Please ensure the template file exists in the qoute_format folder."
         )
     
