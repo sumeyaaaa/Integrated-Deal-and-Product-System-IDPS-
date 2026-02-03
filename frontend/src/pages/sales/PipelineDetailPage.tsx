@@ -13,6 +13,9 @@ import {
   api,
   CustomerListResponse,
   Customer,
+  fetchPipelineVersions,
+  updateSalesPipeline,
+  SalesPipelineUpdate,
 } from "../../services/api";
 import {
   TrendingUp,
@@ -58,10 +61,22 @@ const STAGE_COLORS: Record<PipelineStage, string> = {
   "Proposal": "bg-indigo-100 text-indigo-700 border-indigo-300",
   "Confirmation": "bg-green-100 text-green-700 border-green-300",
   "Closed": "bg-emerald-500 text-white border-emerald-600",
+  "Lost": "bg-red-500 text-white border-red-600",
 };
 
-// Stage progression order
+// Stage progression order (sequential stages, Lost is special)
 const STAGE_ORDER: PipelineStage[] = [
+  "Lead ID",
+  "Discovery",
+  "Sample",
+  "Validation",
+  "Proposal",
+  "Confirmation",
+  "Closed",
+];
+
+// Lost can be reached from any stage
+const SEQUENTIAL_STAGES: PipelineStage[] = [
   "Lead ID",
   "Discovery",
   "Sample",
@@ -76,6 +91,7 @@ export function PipelineDetailPage() {
   const navigate = useNavigate();
   const [selectedPipeline, setSelectedPipeline] = useState<SalesPipeline | null>(null);
   const [relatedPipelines, setRelatedPipelines] = useState<SalesPipeline[]>([]);
+  const [pipelineVersions, setPipelineVersions] = useState<SalesPipeline[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -93,6 +109,16 @@ export function PipelineDetailPage() {
   const [quoteFormat, setQuoteFormat] = useState<"Baracoda" | "Betchem">("Betchem");
   const [termsAndConditions, setTermsAndConditions] = useState<string>("");
   const [showQuoteModal, setShowQuoteModal] = useState(false);
+
+  // Update Pipeline form state
+  const [showUpdateForm, setShowUpdateForm] = useState(false);
+  const [updateFormData, setUpdateFormData] = useState<{
+    stage?: PipelineStage;
+    amount?: number | null;
+    reason_for_stage_change?: string;
+    reason_for_amount_change?: string;
+  }>({});
+  const [updating, setUpdating] = useState(false);
 
   useEffect(() => {
     async function loadDropdownData() {
@@ -159,6 +185,15 @@ export function PipelineDetailPage() {
         setRelatedPipelines(sortedRelated);
       } else {
         setRelatedPipelines([pipeline]);
+      }
+      
+      // Fetch all versions of this pipeline (history with change reasons)
+      try {
+        const versions = await fetchPipelineVersions(pipeline.id);
+        setPipelineVersions(versions);
+      } catch (err) {
+        console.error("Failed to load pipeline versions:", err);
+        setPipelineVersions([pipeline]);
       }
     } catch (err: any) {
       console.error(err);
@@ -311,9 +346,44 @@ export function PipelineDetailPage() {
     };
   }
 
+  function getLatestStageReached(): PipelineStage {
+    if (!pipelineVersions || pipelineVersions.length === 0) {
+      return selectedPipeline?.stage || "Lead ID";
+    }
+    
+    // Find the highest sequential stage ever reached in version history
+    // (Lost is special and doesn't count as progress)
+    let latestStage: PipelineStage = "Lead ID";
+    let highestIndex = -1;
+    
+    for (const version of pipelineVersions) {
+      // Skip Lost stage for progress calculation
+      if (version.stage === "Lost") continue;
+      
+      const stageIndex = STAGE_ORDER.indexOf(version.stage);
+      if (stageIndex > highestIndex) {
+        highestIndex = stageIndex;
+        latestStage = version.stage;
+      }
+    }
+    
+    return latestStage;
+  }
+  
+  function isPipelineLost(): boolean {
+    if (!pipelineVersions || pipelineVersions.length === 0) {
+      return selectedPipeline?.stage === "Lost";
+    }
+    
+    // Check if current version or any version is Lost
+    const latestVersion = pipelineVersions.find(v => v.is_current_version) || pipelineVersions[pipelineVersions.length - 1];
+    return latestVersion?.stage === "Lost" || selectedPipeline?.stage === "Lost";
+  }
+
   function getStageProgress(): number {
     if (!selectedPipeline) return 0;
-    const currentIndex = STAGE_ORDER.indexOf(selectedPipeline.stage);
+    const latestStage = getLatestStageReached();
+    const currentIndex = STAGE_ORDER.indexOf(latestStage);
     return ((currentIndex + 1) / STAGE_ORDER.length) * 100;
   }
 
@@ -345,6 +415,50 @@ export function PipelineDetailPage() {
       setTermsAndConditions("Terms and conditions:\n- For items currently in stock, the advance payment is 100 %");
     } else {
       setTermsAndConditions("Terms and conditions:\nMinium Order Quantity: 1000 KG Per Product\nPayment: Advance Payment is 50% 30% when goods are delivered at Moyale and & Balance Payment is 20% on Delivery.");
+    }
+  }
+
+  async function handleUpdatePipeline(e: React.FormEvent) {
+    e.preventDefault();
+    if (!selectedPipeline) return;
+
+    const stageChanged = updateFormData.stage && updateFormData.stage !== selectedPipeline.stage;
+    const amountChanged = updateFormData.amount !== undefined && updateFormData.amount !== selectedPipeline.amount;
+
+    if (stageChanged && !updateFormData.reason_for_stage_change?.trim()) {
+      alert("Reason for stage change is required when stage changes");
+      return;
+    }
+
+    if (amountChanged && !updateFormData.reason_for_amount_change?.trim()) {
+      alert("Reason for amount change is required when amount changes");
+      return;
+    }
+
+    if (!stageChanged && !amountChanged) {
+      alert("Please change either stage or amount to update the pipeline");
+      return;
+    }
+
+    try {
+      setUpdating(true);
+      const updateData: SalesPipelineUpdate = {
+        stage: updateFormData.stage,
+        amount: updateFormData.amount,
+        reason_for_stage_change: stageChanged ? updateFormData.reason_for_stage_change : null,
+        reason_for_amount_change: amountChanged ? updateFormData.reason_for_amount_change : null,
+      };
+
+      await updateSalesPipeline(selectedPipeline.id, updateData);
+      setShowUpdateForm(false);
+      setUpdateFormData({});
+      // Reload pipeline details to show new version
+      await loadPipelineDetails();
+    } catch (err: any) {
+      console.error("Error updating pipeline:", err);
+      alert(err?.response?.data?.detail ?? err?.message ?? "Failed to update pipeline");
+    } finally {
+      setUpdating(false);
     }
   }
 
@@ -508,10 +622,25 @@ export function PipelineDetailPage() {
               )}
               <button
                 onClick={() => navigate(`/sales/pipeline/${selectedPipeline.id}/edit`)}
-                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-600/30 hover:shadow-emerald-600/50"
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-all shadow-lg shadow-blue-600/30 hover:shadow-blue-600/50"
               >
                 <Edit2 className="w-4 h-4" />
                 Edit Pipeline
+              </button>
+              <button
+                onClick={() => {
+                  setUpdateFormData({
+                    stage: selectedPipeline.stage,
+                    amount: selectedPipeline.amount || null,
+                    reason_for_stage_change: "",
+                    reason_for_amount_change: "",
+                  });
+                  setShowUpdateForm(true);
+                }}
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-600/30 hover:shadow-emerald-600/50"
+              >
+                <Activity className="w-4 h-4" />
+                Update Pipeline
               </button>
             </div>
           </div>
@@ -613,62 +742,131 @@ export function PipelineDetailPage() {
                 <div className="absolute left-6 top-0 bottom-0 w-0.5 bg-slate-200" />
                 
                 <div className="space-y-6">
-                  {STAGE_ORDER.map((stage, index) => {
-                    const isCompleted = STAGE_ORDER.indexOf(selectedPipeline.stage) >= index;
-                    const isCurrent = selectedPipeline.stage === stage;
-                    const isPast = STAGE_ORDER.indexOf(selectedPipeline.stage) > index;
+                  {(() => {
+                    // Calculate these once outside the map
+                    const latestStageReached = getLatestStageReached();
+                    const viewingStage = selectedPipeline.stage;
+                    const isLost = isPipelineLost();
                     
                     return (
-                      <div key={stage} className="relative flex items-start gap-4">
-                        {/* Stage indicator */}
-                        <div className={`relative z-10 flex-shrink-0 w-12 h-12 rounded-full flex items-center justify-center border-2 transition-all ${
-                          isCurrent 
-                            ? "bg-emerald-600 border-emerald-600 shadow-lg shadow-emerald-600/50" 
-                            : isCompleted
-                            ? "bg-emerald-100 border-emerald-500"
-                            : "bg-white border-slate-300"
-                        }`}>
-                          {isCurrent ? (
-                            <CheckCircle2 className="w-6 h-6 text-white" />
-                          ) : isCompleted ? (
-                            <CheckCircle className="w-6 h-6 text-emerald-600" />
-                          ) : (
-                            <Circle className="w-6 h-6 text-slate-400" />
-                          )}
-                        </div>
-                        
-                        {/* Stage content */}
-                        <div className={`flex-1 pt-2 pb-6 ${isPast ? 'opacity-60' : ''}`}>
-                          <div className="flex items-center gap-3 mb-2">
-                            <span
-                              className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold border ${
-                                STAGE_COLORS[stage]
-                              }`}
-                            >
-                              {stage}
-                            </span>
-                            {isCurrent && (
-                              <span className="text-xs font-medium text-emerald-600 bg-emerald-50 px-2 py-1 rounded">
-                                Current Stage
-                              </span>
-                            )}
-                          </div>
-                          {isCurrent && (
-                            <div className="mt-2 p-3 bg-emerald-50 rounded-lg border border-emerald-200">
-                              <p className="text-xs text-slate-600">
-                                <strong>Status:</strong> Active pipeline at this stage
-                              </p>
-                              {selectedPipeline.updated_at && (
-                                <p className="text-xs text-slate-500 mt-1">
-                                  Last updated: {formatDateTime(selectedPipeline.updated_at)}
-                                </p>
-                              )}
+                      <>
+                        {STAGE_ORDER.map((stage, index) => {
+                          // Marking based on latest stage reached (not viewing stage)
+                          const isCompleted = STAGE_ORDER.indexOf(latestStageReached) >= index;
+                          const isLatestReached = latestStageReached === stage;
+                          const isViewing = viewingStage === stage;
+                          const isPast = STAGE_ORDER.indexOf(latestStageReached) > index;
+                          
+                          // Check if this stage was changed (moved to) in version history
+                          const wasChanged = (() => {
+                            if (pipelineVersions.length <= 1) return false;
+                            // Find if any version moved to this stage
+                            for (let i = 1; i < pipelineVersions.length; i++) {
+                              const version = pipelineVersions[i];
+                              const prevVersion = pipelineVersions[i - 1];
+                              if (version.stage === stage && prevVersion.stage !== stage && version.reason_for_stage_change) {
+                                return true;
+                              }
+                            }
+                            return false;
+                          })();
+                          
+                          return (
+                            <div key={stage} className="relative flex items-start gap-4">
+                              {/* Stage indicator */}
+                              <div className={`relative z-10 flex-shrink-0 w-12 h-12 rounded-full flex items-center justify-center border-2 transition-all ${
+                                isLatestReached 
+                                  ? "bg-emerald-600 border-emerald-600 shadow-lg shadow-emerald-600/50" 
+                                  : isCompleted
+                                  ? "bg-emerald-100 border-emerald-500"
+                                  : "bg-white border-slate-300"
+                              }`}>
+                                {isLatestReached ? (
+                                  <CheckCircle2 className="w-6 h-6 text-white" />
+                                ) : isCompleted ? (
+                                  <CheckCircle className="w-6 h-6 text-emerald-600" />
+                                ) : (
+                                  <Circle className="w-6 h-6 text-slate-400" />
+                                )}
+                              </div>
+                              
+                              {/* Stage content */}
+                              <div className={`flex-1 pt-2 pb-6 ${isPast ? 'opacity-60' : ''}`}>
+                                <div className="flex items-center gap-3 mb-2">
+                                  <span
+                                    className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold border ${
+                                      STAGE_COLORS[stage]
+                                    }`}
+                                  >
+                                    {stage}
+                                  </span>
+                                  {isLatestReached && (
+                                    <span className="text-xs font-medium text-emerald-600 bg-emerald-50 px-2 py-1 rounded">
+                                      Latest Reached
+                                    </span>
+                                  )}
+                                  {isViewing && !isLatestReached && (
+                                    <span className="text-xs font-medium text-blue-600 bg-blue-50 px-2 py-1 rounded">
+                                      Viewing
+                                    </span>
+                                  )}
+                                </div>
+                                {wasChanged && (
+                                  <div className="mt-2">
+                                    <span className="text-xs font-semibold text-blue-700 bg-blue-50 px-2 py-1 rounded border border-blue-200">
+                                      CHANGED
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
                             </div>
-                          )}
-                        </div>
-                      </div>
+                          );
+                        })}
+                        
+                        {/* Lost Stage (special - can be reached from any stage) */}
+                        {isLost && (
+                          <div className="relative flex items-start gap-4">
+                            {/* Lost indicator */}
+                            <div className="relative z-10 flex-shrink-0 w-12 h-12 rounded-full flex items-center justify-center border-2 bg-red-500 border-red-600 shadow-lg shadow-red-500/50">
+                              <XCircle className="w-6 h-6 text-white" />
+                            </div>
+                            
+                            {/* Lost content */}
+                            <div className="flex-1 pt-2 pb-6">
+                              <div className="flex items-center gap-3 mb-2">
+                                <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold border bg-red-500 text-white border-red-600">
+                                  Lost
+                                </span>
+                                {viewingStage === "Lost" && (
+                                  <span className="text-xs font-medium text-blue-600 bg-blue-50 px-2 py-1 rounded">
+                                    Viewing
+                                  </span>
+                                )}
+                              </div>
+                              {/* Check if Lost was changed to */}
+                              {(() => {
+                                if (pipelineVersions.length <= 1) return null;
+                                for (let i = 1; i < pipelineVersions.length; i++) {
+                                  const version = pipelineVersions[i];
+                                  const prevVersion = pipelineVersions[i - 1];
+                                  if (version.stage === "Lost" && prevVersion.stage !== "Lost" && version.reason_for_stage_change) {
+                                    return (
+                                      <div className="mt-2">
+                                        <span className="text-xs font-semibold text-blue-700 bg-blue-50 px-2 py-1 rounded border border-blue-200">
+                                          CHANGED
+                                        </span>
+                                      </div>
+                                    );
+                                  }
+                                }
+                                return null;
+                              })()}
+                            </div>
+                          </div>
+                        )}
+                      </>
                     );
-                  })}
+                  })()}
                 </div>
               </div>
             </div>
@@ -816,37 +1014,6 @@ export function PipelineDetailPage() {
                   </div>
                 )}
 
-                {/* VAT Breakdown */}
-                {calculateVAT() && (
-                  <div>
-                    <h3 className="text-sm font-semibold text-slate-700 mb-4 uppercase tracking-wide flex items-center gap-2">
-                      <DollarSign className="w-4 h-4" />
-                      VAT Breakdown (15%)
-                    </h3>
-                    <div className="p-5 bg-gradient-to-br from-indigo-50 to-purple-50 rounded-lg border-2 border-indigo-200">
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between pb-2 border-b border-indigo-200">
-                          <span className="text-sm font-medium text-slate-700">Amount (Without VAT)</span>
-                          <span className="text-lg font-bold text-slate-900">
-                            {formatCurrency(calculateVAT()!.withoutVAT, selectedPipeline.currency)}
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between pb-2 border-b border-indigo-200">
-                          <span className="text-sm font-medium text-slate-700">VAT (15%)</span>
-                          <span className="text-lg font-semibold text-indigo-700">
-                            {formatCurrency(calculateVAT()!.vatAmount, selectedPipeline.currency)}
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between pt-2">
-                          <span className="text-base font-bold text-slate-900">Total (With VAT)</span>
-                          <span className="text-2xl font-bold text-indigo-700">
-                            {formatCurrency(calculateVAT()!.withVAT, selectedPipeline.currency)}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
 
                 {/* Business Details */}
                 {(selectedPipeline.business_model || selectedPipeline.unit || selectedPipeline.unit_price || selectedPipeline.forex || selectedPipeline.business_unit || selectedPipeline.incoterm) && (
@@ -928,132 +1095,6 @@ export function PipelineDetailPage() {
                   </div>
                 )}
 
-                {/* Deal Profile - Four Pillars */}
-                {(selectedPipeline.forex || selectedPipeline.business_unit || selectedPipeline.incoterm || selectedPipeline.business_model) && (
-                  <div>
-                    <h3 className="text-sm font-semibold text-slate-700 mb-4 uppercase tracking-wide flex items-center gap-2">
-                      <Sparkles className="w-4 h-4" />
-                      Deal Profile
-                    </h3>
-                    <div className="bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50 rounded-xl border-2 border-indigo-200 p-6">
-                      <div className="mb-4">
-                        <p className="text-sm font-medium text-slate-800 leading-relaxed">
-                          These factors are <span className="font-bold text-indigo-700">interdependent</span>, creating a unique profile for this pipeline opportunity:
-                        </p>
-                      </div>
-                      
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {selectedPipeline.business_model && (
-                          <div className="p-4 bg-white/90 rounded-lg border border-indigo-200 shadow-sm">
-                            <label className="text-xs font-bold text-indigo-700 uppercase tracking-wide mb-2 block">Business Model</label>
-                            <p className="text-base font-semibold text-slate-900 mb-2">{selectedPipeline.business_model}</p>
-                            <p className="text-xs text-slate-600 leading-relaxed">
-                              Defines the operational approach and revenue structure for this deal.
-                            </p>
-                          </div>
-                        )}
-                        
-                        {selectedPipeline.incoterm && (
-                          <div className="p-4 bg-white/90 rounded-lg border border-purple-200 shadow-sm">
-                            <label className="text-xs font-bold text-purple-700 uppercase tracking-wide mb-2 block">Incoterm</label>
-                            <p className="text-base font-semibold text-slate-900 mb-2">{selectedPipeline.incoterm}</p>
-                            {selectedPipeline.incoterm === "Import of Record" && (
-                              <p className="text-xs text-slate-600 leading-relaxed">
-                                We act as the official importer. Our entity assumes full responsibility for customs clearance, duties, taxes (VAT), and inland logistics in Ethiopia.
-                              </p>
-                            )}
-                            {selectedPipeline.incoterm === "Agency" && (
-                              <p className="text-xs text-slate-600 leading-relaxed">
-                                We act as an intermediary, facilitating the transaction between a foreign supplier and the end-client. Ownership and primary risks typically remain with the supplier or pass to the client.
-                              </p>
-                            )}
-                            {selectedPipeline.incoterm === "Direct Import" && (
-                              <p className="text-xs text-slate-600 leading-relaxed">
-                                The client handles the import process directly from our entities or partners in SEZ or Nairobi. Our involvement is primarily in sourcing and supply agreement.
-                              </p>
-                            )}
-                            {selectedPipeline.incoterm === "Stock – Addis Ababa" && (
-                              <p className="text-xs text-slate-600 leading-relaxed">
-                                We sell from local warehouse inventory. All import processes are complete, enabling immediate delivery. This model requires inventory capital but offers the fastest service.
-                              </p>
-                            )}
-                          </div>
-                        )}
-                        
-                        {selectedPipeline.business_unit && (
-                          <div className="p-4 bg-white/90 rounded-lg border border-pink-200 shadow-sm">
-                            <label className="text-xs font-bold text-pink-700 uppercase tracking-wide mb-2 block">Business Unit</label>
-                            <p className="text-base font-semibold text-slate-900 mb-2">{selectedPipeline.business_unit}</p>
-                            {(selectedPipeline.business_unit === "Hayat" || 
-                              selectedPipeline.business_unit === "Alhadi" || 
-                              selectedPipeline.business_unit === "Bet-chem" || 
-                              selectedPipeline.business_unit === "Barracoda") && (
-                              <p className="text-xs text-slate-600 leading-relaxed">
-                                Specialize in handling major Import of Record contracts for key clients and on sales and distribution from Stock – Addis Ababa.
-                              </p>
-                            )}
-                            {selectedPipeline.business_unit === "Nyumb-Chem" && (
-                              <p className="text-xs text-slate-600 leading-relaxed">
-                                Manages Agency models and Direct Import client engagements.
-                              </p>
-                            )}
-                          </div>
-                        )}
-                        
-                        {selectedPipeline.forex && (
-                          <div className="p-4 bg-white/90 rounded-lg border border-blue-200 shadow-sm">
-                            <label className="text-xs font-bold text-blue-700 uppercase tracking-wide mb-2 block">Forex (Currency Risk)</label>
-                            <p className="text-base font-semibold text-slate-900 mb-2">{selectedPipeline.forex}</p>
-                            {selectedPipeline.forex === "LeanChems" && (
-                              <p className="text-xs text-slate-600 leading-relaxed">
-                                Transactions are priced and settled in ETB. The parent company (LeanChems) centralizes and manages all forex exposure, shielding local business units from currency fluctuation risk.
-                              </p>
-                            )}
-                            {selectedPipeline.forex === "Client" && (
-                              <p className="text-xs text-slate-600 leading-relaxed">
-                                Transactions are structured in foreign currency (e.g., USD). The client (supplier or end-customer) bears the forex risk, or it is a pass-through. Requires careful attention to exchange rates during payment cycles.
-                              </p>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                      
-                      {/* Profile Summary */}
-                      {(() => {
-                        const profile = {
-                          incoterm: selectedPipeline.incoterm,
-                          businessUnit: selectedPipeline.business_unit,
-                          forex: selectedPipeline.forex,
-                          businessModel: selectedPipeline.business_model,
-                        };
-                        
-                        // Generate profile description
-                        let description = "";
-                        if (profile.incoterm === "Import of Record" && profile.businessUnit === "Bet-chem" && profile.forex === "LeanChems") {
-                          description = "Full-service, complex import with predictable ETB-based costing. Long lead time but offers control over the entire process.";
-                        } else if (profile.incoterm === "Agency" && profile.businessUnit === "Nyumb-Chem" && profile.forex === "Client") {
-                          description = "Lower-risk intermediary role focusing on coordination in foreign currency. Client bears forex risk.";
-                        } else if (profile.incoterm === "Stock – Addis Ababa" && profile.businessUnit === "Hayat") {
-                          description = "Fast-turnover local trading leveraging regional partnerships for speed. Immediate delivery from warehouse.";
-                        } else if (profile.incoterm && profile.businessUnit && profile.forex) {
-                          description = "This combination creates a unique operational structure that determines complexity, lead time, and risk profile.";
-                        }
-                        
-                        return description ? (
-                          <div className="mt-4 p-4 bg-indigo-100/50 rounded-lg border border-indigo-300">
-                            <div className="flex items-start gap-2">
-                              <Target className="w-4 h-4 text-indigo-700 mt-0.5 flex-shrink-0" />
-                              <div>
-                                <p className="text-xs font-semibold text-indigo-900 mb-1">Profile Analysis</p>
-                                <p className="text-xs text-slate-700 leading-relaxed italic">{description}</p>
-                              </div>
-                            </div>
-                          </div>
-                        ) : null;
-                      })()}
-                    </div>
-                  </div>
-                )}
 
                 {/* Lead Information */}
                 {(selectedPipeline.lead_source || selectedPipeline.contact_per_lead) && (
@@ -1117,96 +1158,118 @@ export function PipelineDetailPage() {
               </div>
             </div>
 
-            {/* All Pipeline Records */}
-            {relatedPipelines.length > 1 && (
+            {/* Full Version History (Collapsible) */}
+            {pipelineVersions.length > 1 && (
               <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
                 <h2 className="text-lg font-semibold text-slate-900 mb-6 flex items-center gap-2">
-                  <Package className="w-5 h-5 text-blue-600" />
-                  All Pipeline Records
-                  <span className="text-sm font-normal text-slate-500">({relatedPipelines.length} total)</span>
+                  <Activity className="w-5 h-5 text-purple-600" />
+                  Full Version History
+                  <span className="text-sm font-normal text-slate-500">({pipelineVersions.length} versions)</span>
                 </h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {relatedPipelines.map((pipeline, index) => (
-                    <div
-                      key={pipeline.id}
-                      className={`p-5 rounded-xl border-2 transition-all cursor-pointer ${
-                        pipeline.id === selectedPipeline.id
-                          ? "bg-gradient-to-br from-emerald-50 to-emerald-100 border-emerald-400 shadow-lg"
-                          : "bg-white border-slate-200 hover:border-emerald-300 hover:shadow-md"
-                      }`}
-                      onClick={() => navigate(`/sales/pipeline/${pipeline.id}`)}
-                    >
-                      <div className="flex items-center justify-between mb-4">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-bold text-slate-500 bg-slate-100 px-2 py-1 rounded">
-                            #{relatedPipelines.length - index}
-                          </span>
-                          {pipeline.id === selectedPipeline.id && (
-                            <span className="text-xs px-2 py-1 rounded-full bg-emerald-600 text-white font-semibold">
-                              Current
-                            </span>
-                          )}
-                        </div>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            navigate(`/sales/pipeline/${pipeline.id}/edit`);
-                          }}
-                          className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700 transition-colors"
-                          title="Edit this pipeline"
-                        >
-                          <Edit2 className="w-3 h-3" />
-                          Edit
-                        </button>
-                      </div>
-                      <div className="space-y-3">
-                        <div>
-                          <span
-                            className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold border ${
-                              STAGE_COLORS[pipeline.stage]
-                            }`}
-                          >
-                            {pipeline.stage}
-                          </span>
-                        </div>
-                        <div>
-                          <p className="text-xs text-slate-500 mb-1">Amount (Quantity)</p>
-                          <p className="text-lg font-bold text-slate-900">
-                            {pipeline.amount 
-                              ? `${pipeline.amount.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${pipeline.unit || "units"}`
-                              : "—"}
-                          </p>
-                          {pipeline.unit_price && (
-                            <p className="text-xs text-slate-500 mt-1">
-                              {formatCurrency(pipeline.unit_price, pipeline.currency)}/{pipeline.unit || "unit"}
-                            </p>
-                          )}
-                        </div>
-                        <div className="grid grid-cols-2 gap-2 text-xs">
-                          {pipeline.business_model && (
-                            <div>
-                              <p className="text-slate-500">Model</p>
-                              <p className="font-semibold text-slate-900">{pipeline.business_model}</p>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {pipelineVersions.map((version, index) => {
+                    const prevVersion = index > 0 ? pipelineVersions[index - 1] : null;
+                    const stageChanged = prevVersion && prevVersion.stage !== version.stage;
+                    const amountChanged = prevVersion && prevVersion.amount !== version.amount;
+                    
+                    return (
+                      <div
+                        key={version.id}
+                        className={`p-5 rounded-xl border-2 transition-all cursor-pointer hover:shadow-lg ${
+                          version.id === selectedPipeline.id
+                            ? "bg-gradient-to-br from-emerald-50 to-emerald-100 border-emerald-400 shadow-lg"
+                            : version.is_current_version
+                            ? "bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-300"
+                            : "bg-white border-slate-200 hover:border-slate-300"
+                        }`}
+                        onClick={() => navigate(`/sales/pipeline/${version.id}`)}
+                      >
+                        {/* Header */}
+                        <div className="flex items-start justify-between mb-4">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-2">
+                              <span className="text-xs font-bold text-slate-500 bg-slate-100 px-2 py-1 rounded">
+                                V{version.version_number || index + 1}
+                              </span>
+                              {version.is_current_version && (
+                                <span className="text-xs px-2 py-1 rounded-full bg-emerald-600 text-white font-semibold">
+                                  Current
+                                </span>
+                              )}
+                              {version.id === selectedPipeline.id && (
+                                <span className="text-xs px-2 py-1 rounded-full bg-blue-600 text-white font-semibold">
+                                  Viewing
+                                </span>
+                              )}
                             </div>
-                          )}
-                          <div>
-                            <p className="text-slate-500">Close Date</p>
-                            <p className="font-semibold text-slate-900">
-                              {formatDate(pipeline.expected_close_date || null)}
-                            </p>
                           </div>
                         </div>
-                        <div className="pt-2 border-t border-slate-200">
+                        
+                        {/* Stage Badge - Prominent */}
+                        <div className="mb-4">
+                          <span
+                            className={`inline-flex items-center px-4 py-2 rounded-full text-sm font-bold border-2 ${
+                              STAGE_COLORS[version.stage]
+                            }`}
+                          >
+                            {version.stage}
+                          </span>
+                          {stageChanged && prevVersion && (
+                            <p className="text-xs text-slate-500 mt-2">
+                              <span className="font-semibold">From:</span> {prevVersion.stage}
+                            </p>
+                          )}
+                        </div>
+                        
+                        {/* Amount */}
+                        <div className="mb-4">
+                          <p className="text-xs text-slate-500 mb-1">Amount</p>
+                          <p className="text-lg font-bold text-slate-900">
+                            {version.amount 
+                              ? `${version.amount.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${version.unit || "units"}`
+                              : "—"}
+                          </p>
+                          {amountChanged && prevVersion && (
+                            <p className="text-xs text-slate-500 mt-1">
+                              <span className="font-semibold">From:</span> {prevVersion.amount 
+                                ? `${prevVersion.amount.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${prevVersion.unit || "units"}`
+                                : "—"}
+                            </p>
+                          )}
+                        </div>
+                        
+                        {/* Change Reasons - Prominently Displayed */}
+                        {(version.reason_for_stage_change || version.reason_for_amount_change) && (
+                          <div className="mb-4 p-3 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-lg border-2 border-blue-300">
+                            <p className="text-xs font-bold text-blue-900 mb-2 uppercase tracking-wide">Change Reason:</p>
+                            {version.reason_for_stage_change && (
+                              <div className="mb-2">
+                                <p className="text-xs font-semibold text-blue-800 mb-1">Stage Change:</p>
+                                <p className="text-sm text-blue-900 font-medium leading-relaxed">{version.reason_for_stage_change}</p>
+                              </div>
+                            )}
+                            {version.reason_for_amount_change && (
+                              <div>
+                                <p className="text-xs font-semibold text-blue-800 mb-1">Amount Change:</p>
+                                <p className="text-sm text-blue-900 font-medium leading-relaxed">{version.reason_for_amount_change}</p>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        
+                        {/* Timestamp */}
+                        <div className="pt-3 border-t border-slate-200">
                           <p className="text-xs text-slate-400">
-                            Created: {formatDate(pipeline.created_at || null)}
+                            {formatDateTime(version.created_at || null)}
                           </p>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
+            
           </div>
 
           {/* Right Column - AI Assistant */}
@@ -1293,6 +1356,196 @@ export function PipelineDetailPage() {
           </div>
         </div>
       </main>
+
+      {/* Update Pipeline Modal */}
+      {showUpdateForm && selectedPipeline && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6 border-b border-slate-200">
+              <div className="flex items-center justify-between">
+                <h2 className="text-xl font-semibold text-slate-900 flex items-center gap-2">
+                  <Activity className="w-5 h-5 text-emerald-600" />
+                  Update Pipeline
+                </h2>
+                <button
+                  onClick={() => {
+                    setShowUpdateForm(false);
+                    setUpdateFormData({});
+                  }}
+                  className="text-slate-400 hover:text-slate-600 transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <p className="text-sm text-slate-600 mt-2">
+                Update the stage or amount. A new version will be created with your change reasons.
+              </p>
+            </div>
+            <form onSubmit={handleUpdatePipeline} className="p-6 space-y-6">
+              {/* Current Stage Display */}
+              <div className="p-4 bg-slate-50 rounded-lg border border-slate-200">
+                <p className="text-xs font-medium text-slate-500 mb-1">Current Stage</p>
+                <span
+                  className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold border ${
+                    STAGE_COLORS[selectedPipeline.stage]
+                  }`}
+                >
+                  {selectedPipeline.stage}
+                </span>
+              </div>
+
+              {/* Stage Selection */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">
+                  New Stage <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={updateFormData.stage || selectedPipeline.stage}
+                  onChange={(e) =>
+                    setUpdateFormData({
+                      ...updateFormData,
+                      stage: e.target.value as PipelineStage,
+                    })
+                  }
+                  className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                >
+                  {/* Show current stage */}
+                  <option value={selectedPipeline.stage}>
+                    {selectedPipeline.stage} (Current)
+                  </option>
+                  {/* Show next sequential stage if not Lost or Closed */}
+                  {(() => {
+                    const currentIndex = SEQUENTIAL_STAGES.indexOf(selectedPipeline.stage);
+                    const availableStages: PipelineStage[] = [];
+                    
+                    // If current stage is in sequential order, show next stage
+                    if (currentIndex >= 0 && currentIndex < SEQUENTIAL_STAGES.length - 1) {
+                      availableStages.push(SEQUENTIAL_STAGES[currentIndex + 1]);
+                    }
+                    
+                    // Always allow Lost (can be reached from any stage)
+                    availableStages.push("Lost");
+                    
+                    return availableStages.map((stage) => (
+                      <option key={stage} value={stage}>
+                        {stage}
+                        {stage === SEQUENTIAL_STAGES[currentIndex + 1] && " (Next Sequential)"}
+                        {stage === "Lost" && " (Can jump from any stage)"}
+                      </option>
+                    ));
+                  })()}
+                </select>
+                <p className="text-xs text-slate-500 mt-2">
+                  You can only move to the next sequential stage or mark as Lost. Sequential progression: {SEQUENTIAL_STAGES.join(" → ")}
+                </p>
+                {updateFormData.stage && updateFormData.stage !== selectedPipeline.stage && (
+                  <div className="mt-3">
+                    <label className="block text-sm font-medium text-slate-700 mb-2">
+                      Reason for Stage Change <span className="text-red-500">*</span>
+                    </label>
+                    <textarea
+                      value={updateFormData.reason_for_stage_change || ""}
+                      onChange={(e) =>
+                        setUpdateFormData({
+                          ...updateFormData,
+                          reason_for_stage_change: e.target.value,
+                        })
+                      }
+                      required
+                      rows={3}
+                      className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                      placeholder="Explain why the stage is changing..."
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Current Amount Display */}
+              <div className="p-4 bg-slate-50 rounded-lg border border-slate-200">
+                <p className="text-xs font-medium text-slate-500 mb-1">Current Amount</p>
+                <p className="text-lg font-bold text-slate-900">
+                  {selectedPipeline.amount 
+                    ? `${selectedPipeline.amount.toLocaleString()} ${selectedPipeline.unit || "units"}`
+                    : "—"}
+                </p>
+              </div>
+
+              {/* Amount Input */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">
+                  New Amount (Quantity)
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={updateFormData.amount !== undefined ? (updateFormData.amount || "") : (selectedPipeline.amount || "")}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setUpdateFormData({
+                      ...updateFormData,
+                      amount: value && value !== "" ? parseFloat(value) : null,
+                    });
+                  }}
+                  className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  placeholder="Enter new amount..."
+                />
+                {updateFormData.amount !== undefined && updateFormData.amount !== selectedPipeline.amount && (
+                  <div className="mt-3">
+                    <label className="block text-sm font-medium text-slate-700 mb-2">
+                      Reason for Amount Change <span className="text-red-500">*</span>
+                    </label>
+                    <textarea
+                      value={updateFormData.reason_for_amount_change || ""}
+                      onChange={(e) =>
+                        setUpdateFormData({
+                          ...updateFormData,
+                          reason_for_amount_change: e.target.value,
+                        })
+                      }
+                      required
+                      rows={3}
+                      className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                      placeholder="Explain why the amount is changing..."
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowUpdateForm(false);
+                    setUpdateFormData({});
+                  }}
+                  className="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={updating}
+                  className="inline-flex items-center gap-2 px-6 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {updating ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Updating...
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle className="w-4 h-4" />
+                      Update Pipeline
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Quote Generation Modal */}
       {showQuoteModal && (

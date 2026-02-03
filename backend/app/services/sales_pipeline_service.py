@@ -232,6 +232,46 @@ def get_sales_pipeline_by_id(pipeline_id: str) -> Optional[SalesPipeline]:
     return SalesPipeline(**row)
 
 
+def get_pipeline_versions(pipeline_id: str) -> List[SalesPipeline]:
+    """
+    Get all versions of a pipeline (including the original and all updates).
+    
+    Args:
+        pipeline_id: UUID of any version of the pipeline
+    
+    Returns:
+        List of all pipeline versions, ordered by version_number (oldest first)
+    """
+    supabase: Client = get_supabase_client()
+    
+    # Get the pipeline to find its parent or itself
+    pipeline = get_sales_pipeline_by_id(pipeline_id)
+    if not pipeline:
+        return []
+    
+    # Find the root pipeline ID (either parent_pipeline_id or the pipeline itself)
+    root_id = pipeline.parent_pipeline_id or pipeline.id
+    
+    # Get all versions (where parent_pipeline_id = root_id OR id = root_id)
+    response = (
+        supabase.table("sales_pipeline")
+        .select("*")
+        .or_(f"parent_pipeline_id.eq.{root_id},id.eq.{root_id}")
+        .order("version_number", desc=False)  # Oldest first
+        .execute()
+    )
+    
+    if not response.data:
+        return []
+    
+    normalized_rows = []
+    for row in response.data:
+        normalized_row = normalize_pipeline_row_from_db(row)
+        normalized_rows.append(normalized_row)
+    
+    return [SalesPipeline(**row) for row in normalized_rows]
+
+
 def extract_lead_info_from_interactions(customer_id: str) -> Dict[str, Optional[str]]:
     """
     Extract lead_source and contact_per_lead from customer interactions using AI.
@@ -359,16 +399,81 @@ def create_sales_pipeline(body: SalesPipelineCreate) -> SalesPipeline:
     return SalesPipeline(**row)
 
 
+def validate_stage_progression(old_stage: str, new_stage: str, reason: Optional[str]) -> None:
+    """
+    Validate that stage progression is valid and reason is provided when needed.
+    
+    Rules:
+    - Must progress sequentially (Lead ID -> Discovery -> Sample -> Validation -> Proposal -> Confirmation -> Closed)
+    - Cannot skip stages forward without reason
+    - "Lost" can be jumped to from any stage but requires reason
+    - Moving backward requires reason
+    
+    Args:
+        old_stage: Current stage
+        new_stage: New stage
+        reason: Reason for stage change (required if skipping stages, moving backward, or moving to Lost)
+    
+    Raises:
+        ValueError: If stage progression is invalid or reason is missing
+    """
+    if old_stage == new_stage:
+        return  # No change, no validation needed
+    
+    stage_order = [s for s in PIPELINE_STAGES if s != "Lost"]  # Sequential stages (Lost is special)
+    old_index = stage_order.index(old_stage) if old_stage in stage_order else None
+    new_index = stage_order.index(new_stage) if new_stage in stage_order else None
+    
+    # Special case: Moving to "Lost" from any stage - always allowed but requires reason
+    if new_stage == "Lost":
+        if not reason or not reason.strip():
+            raise ValueError("reason_for_stage_change is required when moving to Lost stage")
+        return  # Lost can be reached from any stage with reason
+    
+    # If old stage is Lost, can move to any stage (reopening)
+    if old_stage == "Lost":
+        if not reason or not reason.strip():
+            raise ValueError("reason_for_stage_change is required when moving from Lost stage")
+        return
+    
+    if old_index is None or new_index is None:
+        return  # Allow if stages not in order (edge case)
+    
+    # Moving forward by exactly 1 stage (normal sequential progression) - reason optional
+    if new_index == old_index + 1:
+        return  # Normal progression, reason optional
+    
+    # Moving backward - require reason
+    if new_index < old_index:
+        if not reason or not reason.strip():
+            raise ValueError("reason_for_stage_change is required when moving backward in pipeline stages")
+        return
+    
+    # Skipping stages forward (more than 1) - NOT ALLOWED, require reason and explain
+    if new_index > old_index + 1:
+        skipped_stages = stage_order[old_index + 1:new_index]
+        if not reason or not reason.strip():
+            raise ValueError(
+                f"Cannot skip pipeline stages. You are trying to jump from '{old_stage}' to '{new_stage}', "
+                f"skipping: {', '.join(skipped_stages)}. "
+                f"You must progress sequentially through: {old_stage} -> {stage_order[old_index + 1]}. "
+                f"If you need to skip stages, please provide a detailed reason_for_stage_change explaining why."
+            )
+        # Even with reason, warn but allow (they provided reason)
+        return
+
+
 def update_sales_pipeline(pipeline_id: str, body: SalesPipelineUpdate) -> SalesPipeline:
     """
     Update an existing sales pipeline record.
+    If stage or amount changes, creates a new version instead of updating existing record.
     
     Args:
         pipeline_id: UUID of the pipeline record
         body: SalesPipelineUpdate object with fields to update
     
     Returns:
-        Updated SalesPipeline record
+        Updated SalesPipeline record (new version if stage/amount changed)
     """
     supabase: Client = get_supabase_client()
     
@@ -381,16 +486,114 @@ def update_sales_pipeline(pipeline_id: str, body: SalesPipelineUpdate) -> SalesP
     if not update_data:
         return existing
     
-    # Convert all UUIDs and dates to strings for JSON serialization
+    # Check if stage or amount changed
+    stage_changed = "stage" in update_data and update_data["stage"] != existing.stage
+    amount_changed = "amount" in update_data and update_data.get("amount") != existing.amount
+    
+    # Validate stage progression if stage changed
+    if stage_changed:
+        reason = update_data.get("reason_for_stage_change")
+        validate_stage_progression(existing.stage, update_data["stage"], reason)
+        if not reason or not reason.strip():
+            raise ValueError("reason_for_stage_change is required when stage changes")
+    
+    # Validate amount change reason if amount changed
+    if amount_changed:
+        reason = update_data.get("reason_for_amount_change")
+        if not reason or not reason.strip():
+            raise ValueError("reason_for_amount_change is required when amount changes")
+    
+    # If stage or amount changed, create new version instead of updating
+    if stage_changed or amount_changed:
+        # Mark old version as not current
+        supabase.table("sales_pipeline").update({
+            "is_current_version": False
+        }).eq("id", pipeline_id).execute()
+        
+        # Get next version number
+        parent_id = existing.parent_pipeline_id or existing.id
+        version_query = supabase.table("sales_pipeline").select("version_number").or_(
+            f"parent_pipeline_id.eq.{parent_id},id.eq.{parent_id}"
+        ).order("version_number", desc=True).limit(1).execute()
+        
+        next_version = 1
+        if version_query.data:
+            next_version = (version_query.data[0].get("version_number") or 0) + 1
+        
+        # Create new version with all existing data + updates
+        # Get all fields from existing pipeline, excluding metadata fields
+        existing_dict = existing.model_dump(exclude={"id", "created_at", "updated_at", "version_number", "parent_pipeline_id", "is_current_version", "ai_interactions"})
+        
+        # Filter out None values and fields that might not exist in database
+        # Only include fields that have values to avoid column errors
+        new_pipeline_data = {}
+        for key, value in existing_dict.items():
+            if value is not None:
+                new_pipeline_data[key] = value
+        
+        # Apply updates
+        for key, value in update_data.items():
+            if value is not None:
+                new_pipeline_data[key] = value
+        
+        # Set versioning fields
+        new_pipeline_data["parent_pipeline_id"] = parent_id
+        new_pipeline_data["version_number"] = next_version
+        new_pipeline_data["is_current_version"] = True
+        
+        # Convert UUIDs and dates
+        new_pipeline_data = convert_uuids(new_pipeline_data)
+        
+        # Create new pipeline record
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"Creating new pipeline version for {pipeline_id}: version {next_version}")
+        logger.info(f"New pipeline data keys: {list(new_pipeline_data.keys())}")
+        
+        try:
+            response = supabase.table("sales_pipeline").insert(new_pipeline_data).execute()
+        except Exception as e:
+            error_str = str(e).lower()
+            # Handle missing column errors by removing those fields
+            if "column" in error_str and "does not exist" in error_str:
+                logger.warning(f"Column error detected: {str(e)}")
+                # Try to identify which column is missing and remove it
+                if "incoterm" in error_str:
+                    logger.warning("Removing 'incoterm' field - column doesn't exist")
+                    new_pipeline_data.pop("incoterm", None)
+                if "forex" in error_str:
+                    logger.warning("Removing 'forex' field - column doesn't exist")
+                    new_pipeline_data.pop("forex", None)
+                if "business_unit" in error_str:
+                    logger.warning("Removing 'business_unit' field - column doesn't exist")
+                    new_pipeline_data.pop("business_unit", None)
+                if "amount" in error_str:
+                    logger.warning("Removing 'amount' field, trying 'deal_value_usd' instead")
+                    if "amount" in new_pipeline_data:
+                        new_pipeline_data["deal_value_usd"] = new_pipeline_data.pop("amount")
+                
+                # Retry insert after removing problematic fields
+                try:
+                    response = supabase.table("sales_pipeline").insert(new_pipeline_data).execute()
+                except Exception as e2:
+                    logger.error(f"Failed to insert after removing fields: {str(e2)}")
+                    raise
+            else:
+                raise
+        
+        if not response.data:
+            raise RuntimeError("Failed to create new pipeline version")
+        
+        row = normalize_pipeline_row_from_db(response.data[0])
+        return SalesPipeline(**row)
+    
+    # Regular update (no stage/amount change) - just update existing record
     update_data = convert_uuids(update_data)
     
-    # Log the update data for debugging
     import logging
     logger = logging.getLogger(__name__)
     logger.info(f"Updating pipeline {pipeline_id} with data: {update_data}")
-    logger.info(f"Amount value: {update_data.get('amount')}, type: {type(update_data.get('amount'))}")
     
-    # Try updating with 'amount' first
     try:
         response = (
             supabase.table("sales_pipeline")
@@ -399,7 +602,6 @@ def update_sales_pipeline(pipeline_id: str, body: SalesPipelineUpdate) -> SalesP
             .execute()
         )
     except Exception as e:
-        # If it fails because column doesn't exist, try mapping 'amount' to 'deal_value_usd'
         error_str = str(e).lower()
         if "amount" in error_str and ("column" in error_str or "does not exist" in error_str):
             logger.warning(f"Column 'amount' not found, trying 'deal_value_usd' instead")
@@ -1102,21 +1304,22 @@ def chat_with_pipeline(
         except:
             pass
     
-    # 5) Get customer interactions related to this product
+    # 5) Get ALL customer interactions (not just product-specific) for comprehensive context
+    all_customer_interactions = []
     product_interactions = []
-    if pipeline.tds_id:
-        try:
-            all_interactions = get_interactions_for_customer(
-                customer_id=str(pipeline.customer_id),
-                limit=20,
-            )
-            # Filter interactions that mention this product
+    try:
+        all_customer_interactions = get_interactions_for_customer(
+            customer_id=str(pipeline.customer_id),
+            limit=30,  # Get more interactions for better context
+        )
+        # Also filter product-specific interactions if product is specified
+        if pipeline.tds_id:
             product_interactions = [
-                it for it in all_interactions
+                it for it in all_customer_interactions
                 if it.tds_id and str(it.tds_id) == str(pipeline.tds_id)
             ]
-        except:
-            pass
+    except:
+        pass
     
     # 6) Build comprehensive context
     amount_str = f"{pipeline.amount or 0:,.2f}" if pipeline.amount else "Not set"
@@ -1155,19 +1358,25 @@ Pipeline History (Total: {len(related_pipelines)} records):
     else:
         pipeline_history = "\nPipeline History: This is the first pipeline record for this customer+product combination.\n"
     
+    # Build comprehensive interaction context
     interaction_context = ""
-    if product_interactions:
+    if all_customer_interactions:
         interaction_context = f"""
-Recent Product-Specific Interactions ({len(product_interactions)}):
+Customer Interaction History ({len(all_customer_interactions)} total interactions):
 """
-        for idx, it in enumerate(product_interactions[:5], 1):  # Show last 5
+        # Show most recent interactions (up to 10)
+        for idx, it in enumerate(all_customer_interactions[:10], 1):
             interaction_context += f"\nInteraction {idx}:\n"
             if it.input_text:
                 interaction_context += f"  Q: {it.input_text[:200]}\n"
             if it.ai_response:
                 interaction_context += f"  A: {it.ai_response[:200]}\n"
+        
+        # Add note about product-specific interactions if available
+        if product_interactions:
+            interaction_context += f"\n\nNote: {len(product_interactions)} of these interactions are specifically related to this product.\n"
     else:
-        interaction_context = "\nProduct-Specific Interactions: No interactions found for this product.\n"
+        interaction_context = "\nCustomer Interaction History: No interactions found for this customer.\n"
     
     # 7) Create specialized system prompt for sales pipeline advice
     system_prompt = f"""You are an expert B2B chemical sales advisor for LeanChem, specializing in pipeline management and deal strategy.
@@ -1177,7 +1386,7 @@ Your role is to provide actionable sales advice specific to this pipeline opport
 - Product/TDS specifications
 - Pipeline stage and deal details
 - Related pipeline records
-- Product-specific customer interactions
+- Complete customer interaction history (all CRM interactions, not just product-specific)
 
 {pipeline_context}
 {product_context}

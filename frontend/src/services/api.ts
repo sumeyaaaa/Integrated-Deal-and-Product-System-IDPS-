@@ -16,6 +16,14 @@ export interface Customer {
   updated_at?: string | null;
   product_alignment_scores?: Record<string, number> | null; // Strategic-Fit Matrix: {"Cement": 0-3, "Dry-Mix": 0-3, ...}
   sales_stage?: string | null; // Current sales stage (1-7 from Brian Tracy process)
+  website_url?: string | null;
+  linkedin_company_url?: string | null;
+  primary_contact_name?: string | null;
+  primary_contact_email?: string | null;
+  primary_contact_phone?: string | null;
+  latest_profile_text?: string | null;
+  latest_profile_updated_at?: string | null;
+  external_last_fetched_at?: string | null;
 }
 
 export interface Interaction {
@@ -27,6 +35,7 @@ export interface Interaction {
   file_url?: string | null;
   file_type?: string | null;
   tds_id?: string | null;
+  pipeline_id?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
 }
@@ -50,11 +59,36 @@ export interface InteractionUpdate {
   input_text?: string | null;
   ai_response?: string | null;
   tds_id?: string | null;
+  pipeline_id?: string | null;
 }
 
 export interface CustomerUpdate {
   customer_name?: string | null;
   display_id?: string | null;
+  sales_stage?: string | null;
+  website_url?: string | null;
+  linkedin_company_url?: string | null;
+  primary_contact_name?: string | null;
+  primary_contact_email?: string | null;
+  primary_contact_phone?: string | null;
+}
+
+export interface CustomerProfileFeedback {
+  id: string;
+  customer_id: string;
+  rating: number;
+  comment?: string | null;
+  user_id?: string | null;
+  created_at?: string | null;
+}
+
+export interface CustomerProfileFeedbackCreate {
+  rating: number;
+  comment?: string | null;
+}
+
+export interface CustomerProfileUpdate {
+  profile_text: string;
 }
 
 // =============================
@@ -77,6 +111,33 @@ export async function fetchCustomers(params?: {
       ...(params?.end_date && { end_date: params.end_date }),
     },
   });
+  return res.data;
+}
+
+export async function updateCustomerProfile(
+  customerId: string,
+  body: CustomerProfileUpdate
+) {
+  const res = await api.put<Customer>(`/crm/customers/${customerId}/profile`, body);
+  return res.data;
+}
+
+export async function fetchCustomerProfileFeedback(customerId: string, limit = 10) {
+  const res = await api.get<CustomerProfileFeedback[]>(
+    `/crm/customers/${customerId}/profile/feedback`,
+    { params: { limit } }
+  );
+  return res.data;
+}
+
+export async function submitCustomerProfileFeedback(
+  customerId: string,
+  body: CustomerProfileFeedbackCreate
+) {
+  const res = await api.post<CustomerProfileFeedback>(
+    `/crm/customers/${customerId}/profile/feedback`,
+    body
+  );
   return res.data;
 }
 
@@ -259,6 +320,102 @@ export async function updatePricing(
 
 export async function deletePricing(partnerId: string, tdsId: string) {
   await api.delete(`/pms/pricing/${partnerId}/${tdsId}`);
+}
+
+// Partner Chemicals
+export interface PartnerChemical {
+  id: string;
+  vendor: string;
+  product_category: string;
+  sub_category?: string | null;
+  product_name: string;
+  brand?: string | null;
+  packing: string;
+  price?: number | null;
+  competitive_price?: number | null;
+  cost?: number | null;
+  tds_id?: string | null;
+  metadata?: Record<string, any> | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface PartnerChemicalListResponse {
+  partner_chemicals: PartnerChemical[];
+  total: number;
+}
+
+export interface PartnerChemicalCreate {
+  vendor: string;
+  product_category: string;
+  sub_category?: string | null;
+  product_name: string;
+  brand?: string | null;
+  packing: string;
+  price?: number | null;
+  competitive_price?: number | null;
+  cost?: number | null;
+  tds_id?: string | null;
+  metadata?: Record<string, any> | null;
+}
+
+export interface PartnerChemicalUpdate {
+  vendor?: string | null;
+  product_category?: string | null;
+  sub_category?: string | null;
+  product_name?: string | null;
+  brand?: string | null;
+  packing?: string | null;
+  price?: number | null;
+  competitive_price?: number | null;
+  cost?: number | null;
+  tds_id?: string | null;
+  metadata?: Record<string, any> | null;
+}
+
+export async function fetchPartnerChemicals(params?: {
+  limit?: number;
+  offset?: number;
+  vendor?: string;
+  product_category?: string;
+  sub_category?: string;
+}) {
+  const res = await api.get<PartnerChemicalListResponse>("/pms/partner-chemicals", { params });
+  return res.data;
+}
+
+export async function createPartnerChemical(data: PartnerChemicalCreate) {
+  const res = await api.post<PartnerChemical>("/pms/partner-chemicals", data);
+  return res.data;
+}
+
+export async function updatePartnerChemical(id: string, data: PartnerChemicalUpdate) {
+  const res = await api.put<PartnerChemical>(`/pms/partner-chemicals/${id}`, data);
+  return res.data;
+}
+
+export async function deletePartnerChemical(id: string) {
+  await api.delete(`/pms/partner-chemicals/${id}`);
+}
+
+export async function fetchPartnerChemical(id: string) {
+  const res = await api.get<PartnerChemical>(`/pms/partner-chemicals/${id}`);
+  return res.data;
+}
+
+export async function fetchVendors() {
+  const res = await api.get<string[]>("/pms/partner-chemicals/vendors");
+  return res.data;
+}
+
+export async function fetchProductCategories() {
+  const res = await api.get<string[]>("/pms/partner-chemicals/product-categories");
+  return res.data;
+}
+
+export async function fetchSubCategories() {
+  const res = await api.get<string[]>("/pms/partner-chemicals/sub-categories");
+  return res.data;
 }
 
 // =============================
@@ -451,6 +608,11 @@ export interface SalesPipeline {
   }> | null;
   created_at?: string | null;
   updated_at?: string | null;
+  parent_pipeline_id?: string | null;
+  version_number?: number | null;
+  reason_for_stage_change?: string | null;
+  reason_for_amount_change?: string | null;
+  is_current_version?: boolean | null;
 }
 
 export interface SalesPipelineCreate {
@@ -491,6 +653,8 @@ export interface SalesPipelineUpdate {
   business_unit?: BusinessUnit | null;
   incoterm?: Incoterm | null;
   metadata?: Record<string, any> | null;
+  reason_for_stage_change?: string | null;
+  reason_for_amount_change?: string | null;
 }
 
 export interface SalesPipelineListResponse {
@@ -554,6 +718,11 @@ export async function fetchSalesPipelines(params?: {
 export async function fetchSalesPipelineById(id: string) {
   const res = await api.get<SalesPipeline>(`/sales-pipeline/${id}`);
   return res.data;
+}
+
+export async function fetchPipelineVersions(id: string) {
+  const res = await api.get<SalesPipelineListResponse>(`/sales-pipeline/${id}/versions`);
+  return res.data.pipelines;
 }
 
 export async function createSalesPipeline(data: SalesPipelineCreate) {

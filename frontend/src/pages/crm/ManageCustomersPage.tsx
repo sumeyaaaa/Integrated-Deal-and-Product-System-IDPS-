@@ -27,6 +27,11 @@ export function ManageCustomersPage() {
   const [showAddForm, setShowAddForm] = useState(false);
   const [newCustomerName, setNewCustomerName] = useState("");
   const [newDisplayId, setNewDisplayId] = useState("");
+  const [newWebsiteUrl, setNewWebsiteUrl] = useState("");
+  const [newLinkedinUrl, setNewLinkedinUrl] = useState("");
+  const [newPrimaryContactName, setNewPrimaryContactName] = useState("");
+  const [newPrimaryContactEmail, setNewPrimaryContactEmail] = useState("");
+  const [newPrimaryContactPhone, setNewPrimaryContactPhone] = useState("");
   const [adding, setAdding] = useState(false);
   
   // Build profile state
@@ -38,6 +43,11 @@ export function ManageCustomersPage() {
   const [editName, setEditName] = useState("");
   const [editDisplayId, setEditDisplayId] = useState("");
   const [editSalesStage, setEditSalesStage] = useState("");
+  const [editWebsiteUrl, setEditWebsiteUrl] = useState("");
+  const [editLinkedinUrl, setEditLinkedinUrl] = useState("");
+  const [editPrimaryContactName, setEditPrimaryContactName] = useState("");
+  const [editPrimaryContactEmail, setEditPrimaryContactEmail] = useState("");
+  const [editPrimaryContactPhone, setEditPrimaryContactPhone] = useState("");
   const [saving, setSaving] = useState(false);
   
   // Auto-fill sales stage state (per customer)
@@ -132,12 +142,22 @@ export function ManageCustomersPage() {
       const res = await api.post<Customer>("/crm/customers", {
         customer_name: newCustomerName.trim(),
         display_id: newDisplayId.trim() || undefined,
+        website_url: newWebsiteUrl.trim() || undefined,
+        linkedin_company_url: newLinkedinUrl.trim() || undefined,
+        primary_contact_name: newPrimaryContactName.trim() || undefined,
+        primary_contact_email: newPrimaryContactEmail.trim() || undefined,
+        primary_contact_phone: newPrimaryContactPhone.trim() || undefined,
       });
 
       setCustomers((prev) => [res.data, ...prev]);
       setTotal((prev) => prev + 1);
       setNewCustomerName("");
       setNewDisplayId("");
+      setNewWebsiteUrl("");
+      setNewLinkedinUrl("");
+      setNewPrimaryContactName("");
+      setNewPrimaryContactEmail("");
+      setNewPrimaryContactPhone("");
       setShowAddForm(false);
       
       // Automatically auto-fill sales stage after creating customer
@@ -208,6 +228,11 @@ export function ManageCustomersPage() {
     setEditName(customer.customer_name);
     setEditDisplayId(customer.display_id || "");
     setEditSalesStage(customer.sales_stage || "1");
+    setEditWebsiteUrl(customer.website_url || "");
+    setEditLinkedinUrl(customer.linkedin_company_url || "");
+    setEditPrimaryContactName(customer.primary_contact_name || "");
+    setEditPrimaryContactEmail(customer.primary_contact_email || "");
+    setEditPrimaryContactPhone(customer.primary_contact_phone || "");
   }
 
   function cancelEdit() {
@@ -215,6 +240,11 @@ export function ManageCustomersPage() {
     setEditName("");
     setEditDisplayId("");
     setEditSalesStage("1");
+    setEditWebsiteUrl("");
+    setEditLinkedinUrl("");
+    setEditPrimaryContactName("");
+    setEditPrimaryContactEmail("");
+    setEditPrimaryContactPhone("");
   }
 
   async function saveEdit(customerId: string) {
@@ -224,6 +254,11 @@ export function ManageCustomersPage() {
         customer_name: editName.trim() || undefined,
         display_id: editDisplayId.trim() || undefined,
         sales_stage: editSalesStage || undefined,
+        website_url: editWebsiteUrl.trim() || undefined,
+        linkedin_company_url: editLinkedinUrl.trim() || undefined,
+        primary_contact_name: editPrimaryContactName.trim() || undefined,
+        primary_contact_email: editPrimaryContactEmail.trim() || undefined,
+        primary_contact_phone: editPrimaryContactPhone.trim() || undefined,
       };
 
       const res = await api.put<Customer>(`/crm/customers/${customerId}`, update);
@@ -361,6 +396,66 @@ export function ManageCustomersPage() {
                 value={newDisplayId}
                 onChange={(e) => setNewDisplayId(e.target.value)}
                 placeholder="e.g. LC-2025-CUST-0001"
+              />
+            </div>
+            <div className="form-field">
+              <label htmlFor="new_website_url">
+                Website URL <span className="muted">(optional)</span>
+              </label>
+              <input
+                id="new_website_url"
+                type="url"
+                value={newWebsiteUrl}
+                onChange={(e) => setNewWebsiteUrl(e.target.value)}
+                placeholder="e.g. https://www.example.com"
+              />
+            </div>
+            <div className="form-field">
+              <label htmlFor="new_linkedin_url">
+                LinkedIn Company URL <span className="muted">(optional)</span>
+              </label>
+              <input
+                id="new_linkedin_url"
+                type="url"
+                value={newLinkedinUrl}
+                onChange={(e) => setNewLinkedinUrl(e.target.value)}
+                placeholder="e.g. https://www.linkedin.com/company/example"
+              />
+            </div>
+            <div className="form-field">
+              <label htmlFor="new_primary_contact_name">
+                Primary Contact Name <span className="muted">(optional)</span>
+              </label>
+              <input
+                id="new_primary_contact_name"
+                type="text"
+                value={newPrimaryContactName}
+                onChange={(e) => setNewPrimaryContactName(e.target.value)}
+                placeholder="e.g. John Doe"
+              />
+            </div>
+            <div className="form-field">
+              <label htmlFor="new_primary_contact_email">
+                Primary Contact Email <span className="muted">(optional)</span>
+              </label>
+              <input
+                id="new_primary_contact_email"
+                type="email"
+                value={newPrimaryContactEmail}
+                onChange={(e) => setNewPrimaryContactEmail(e.target.value)}
+                placeholder="e.g. john.doe@example.com"
+              />
+            </div>
+            <div className="form-field">
+              <label htmlFor="new_primary_contact_phone">
+                Primary Contact Phone <span className="muted">(optional)</span>
+              </label>
+              <input
+                id="new_primary_contact_phone"
+                type="tel"
+                value={newPrimaryContactPhone}
+                onChange={(e) => setNewPrimaryContactPhone(e.target.value)}
+                placeholder="e.g. +251 9XX XXX XXX"
               />
             </div>
             <div className="form-actions">
@@ -553,6 +648,136 @@ export function ManageCustomersPage() {
                           type="text"
                           value={editDisplayId}
                           onChange={(e) => setEditDisplayId(e.target.value)}
+                          style={{
+                            width: "100%",
+                            padding: "0.75rem",
+                            border: "1px solid #d1d5db",
+                            borderRadius: "0.5rem",
+                            fontSize: "1rem",
+                          }}
+                        />
+                      </div>
+                      <div style={{ marginBottom: "1.5rem" }}>
+                        <label
+                          style={{
+                            display: "block",
+                            fontSize: "0.875rem",
+                            fontWeight: "600",
+                            color: "#374151",
+                            marginBottom: "0.5rem",
+                          }}
+                        >
+                          Website URL
+                        </label>
+                        <input
+                          type="url"
+                          value={editWebsiteUrl}
+                          onChange={(e) => setEditWebsiteUrl(e.target.value)}
+                          placeholder="https://www.example.com"
+                          style={{
+                            width: "100%",
+                            padding: "0.75rem",
+                            border: "1px solid #d1d5db",
+                            borderRadius: "0.5rem",
+                            fontSize: "1rem",
+                          }}
+                        />
+                      </div>
+                      <div style={{ marginBottom: "1.5rem" }}>
+                        <label
+                          style={{
+                            display: "block",
+                            fontSize: "0.875rem",
+                            fontWeight: "600",
+                            color: "#374151",
+                            marginBottom: "0.5rem",
+                          }}
+                        >
+                          LinkedIn Company URL
+                        </label>
+                        <input
+                          type="url"
+                          value={editLinkedinUrl}
+                          onChange={(e) => setEditLinkedinUrl(e.target.value)}
+                          placeholder="https://www.linkedin.com/company/example"
+                          style={{
+                            width: "100%",
+                            padding: "0.75rem",
+                            border: "1px solid #d1d5db",
+                            borderRadius: "0.5rem",
+                            fontSize: "1rem",
+                          }}
+                        />
+                      </div>
+                      <div style={{ marginBottom: "1.5rem" }}>
+                        <label
+                          style={{
+                            display: "block",
+                            fontSize: "0.875rem",
+                            fontWeight: "600",
+                            color: "#374151",
+                            marginBottom: "0.5rem",
+                          }}
+                        >
+                          Primary Contact Name
+                        </label>
+                        <input
+                          type="text"
+                          value={editPrimaryContactName}
+                          onChange={(e) => setEditPrimaryContactName(e.target.value)}
+                          placeholder="John Doe"
+                          style={{
+                            width: "100%",
+                            padding: "0.75rem",
+                            border: "1px solid #d1d5db",
+                            borderRadius: "0.5rem",
+                            fontSize: "1rem",
+                          }}
+                        />
+                      </div>
+                      <div style={{ marginBottom: "1.5rem" }}>
+                        <label
+                          style={{
+                            display: "block",
+                            fontSize: "0.875rem",
+                            fontWeight: "600",
+                            color: "#374151",
+                            marginBottom: "0.5rem",
+                          }}
+                        >
+                          Primary Contact Email
+                        </label>
+                        <input
+                          type="email"
+                          value={editPrimaryContactEmail}
+                          onChange={(e) => setEditPrimaryContactEmail(e.target.value)}
+                          placeholder="john.doe@example.com"
+                          style={{
+                            width: "100%",
+                            padding: "0.75rem",
+                            border: "1px solid #d1d5db",
+                            borderRadius: "0.5rem",
+                            fontSize: "1rem",
+                          }}
+                        />
+                      </div>
+                      <div style={{ marginBottom: "1.5rem" }}>
+                        <label
+                          style={{
+                            display: "block",
+                            fontSize: "0.875rem",
+                            fontWeight: "600",
+                            color: "#374151",
+                            marginBottom: "0.5rem",
+                          }}
+                        >
+                          Primary Contact Phone
+                        </label>
+                        <input
+                          type="tel"
+                          value={editPrimaryContactPhone}
+                          onChange={(e) => setEditPrimaryContactPhone(e.target.value)}
+                          placeholder="+251 9XX XXX XXX"
                           style={{
                             width: "100%",
                             padding: "0.75rem",

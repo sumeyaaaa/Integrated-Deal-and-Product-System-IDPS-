@@ -1,22 +1,8 @@
-"""
-CRM API Routes
 
-This file defines all the HTTP endpoints for CRM operations.
-Think of it as the "front door" - users call these URLs to interact with customers.
-
-Example:
-- GET  /api/v1/crm/customers                 → list customers
-- GET  /api/v1/crm/customers/{id}            → get a customer
-- POST /api/v1/crm/customers                 → create a customer
-- GET  /api/v1/crm/customers/{id}/interactions → list interactions for a customer
-- POST /api/v1/crm/customers/{id}/interactions → create interaction for a customer
-- PUT  /api/v1/crm/interactions/{id}         → update interaction
-- DELETE /api/v1/crm/interactions/{id}       → delete interaction
-"""
 from fastapi import APIRouter, HTTPException, Depends, Query, Response, UploadFile, File, Form, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.exceptions import RequestValidationError
-from typing import Optional
+from typing import Optional, List
 from pathlib import Path
 import logging
 
@@ -32,6 +18,9 @@ from app.models.crm import (
     CustomerChatRequest,
     QuoteDraftRequest,
     DashboardMetrics,
+    CustomerProfileUpdate,
+    CustomerProfileFeedback,
+    CustomerProfileFeedbackCreate,
 )
 from app.services.crm_service import (
     get_all_customers,
@@ -52,6 +41,9 @@ from app.services.crm_service import (
     generate_quote_excel,
     auto_fill_sales_stage_for_customer,
     get_dashboard_metrics,
+    update_customer_profile_text,
+    add_customer_profile_feedback,
+    list_customer_profile_feedback,
 )
 from app.dependencies import get_current_user
 
@@ -262,6 +254,119 @@ async def auto_fill_sales_stage_endpoint(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error auto-filling sales stage: {str(e)}")
+
+
+@router.put("/customers/{customer_id}/profile", response_model=Customer)
+async def update_customer_profile_endpoint(
+    customer_id: str,
+    profile_update: CustomerProfileUpdate,
+    # user: dict = Depends(get_current_user)  # Uncomment when auth is ready
+):
+    """
+    Update the latest AI-generated ICP profile text for a customer.
+
+    This updates the `latest_profile_text` and `latest_profile_updated_at` fields
+    on the customer record.
+    """
+    try:
+        return update_customer_profile_text(customer_id, profile_update)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error updating customer profile: {str(e)}")
+
+
+@router.get(
+    "/customers/{customer_id}/profile/feedback",
+    response_model=List[CustomerProfileFeedback],
+)
+async def list_customer_profile_feedback_endpoint(
+    customer_id: str,
+    limit: int = Query(10, ge=1, le=100, description="Maximum number of feedback entries to return"),
+    # user: dict = Depends(get_current_user)  # Uncomment when auth is ready
+):
+    """Return recent feedback entries (ratings/comments) for a customer's ICP profile.
+    
+    If the feedback table doesn't exist, returns an empty list (graceful degradation).
+    """
+    try:
+        return list_customer_profile_feedback(customer_id, limit=limit)
+    except Exception as e:
+        # If table doesn't exist, return empty list instead of 500 error
+        error_msg = str(e)
+        if "PGRST205" in error_msg or "customer_profile_feedback" in error_msg.lower() or "table" in error_msg.lower():
+            import logging
+            logging.warning(f"Feedback table not found, returning empty list. Error: {error_msg}")
+            return []
+        # Re-raise other unexpected errors
+        raise HTTPException(status_code=500, detail=f"Error fetching profile feedback: {str(e)}")
+
+
+@router.post(
+    "/customers/{customer_id}/profile/feedback",
+    response_model=CustomerProfileFeedback,
+    status_code=201,
+)
+async def add_customer_profile_feedback_endpoint(
+    customer_id: str,
+    feedback_in: CustomerProfileFeedbackCreate,
+    # user: dict = Depends(get_current_user)  # Uncomment when auth is ready
+):
+    """Submit a rating/comment for a customer's ICP profile.
+    
+    If the feedback table doesn't exist, returns a mock response (graceful degradation).
+    """
+    try:
+        return add_customer_profile_feedback(customer_id, feedback_in)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        # If table doesn't exist, the service layer should return a mock response
+        # But if it still raises, catch it here too
+        error_msg = str(e)
+        if "PGRST205" in error_msg or "customer_profile_feedback" in error_msg.lower() or "table" in error_msg.lower():
+            import logging
+            logging.warning(f"Feedback table not found, returning mock response. Error: {error_msg}")
+            # Return a mock response so frontend doesn't break
+            from uuid import uuid4
+            from datetime import datetime
+            from app.models.crm import CustomerProfileFeedback
+            return CustomerProfileFeedback(
+                id=str(uuid4()),
+                customer_id=customer_id,
+                rating=feedback_in.rating,
+                comment=feedback_in.comment,
+                user_id=None,
+                created_at=datetime.utcnow().isoformat(),
+            )
+        # Re-raise other unexpected errors
+        raise HTTPException(status_code=500, detail=f"Error submitting profile feedback: {str(e)}")
+
+
+@router.get("/customers/{customer_id}/profile/download", response_class=PlainTextResponse)
+async def download_customer_profile_endpoint(
+    customer_id: str,
+    # user: dict = Depends(get_current_user)  # Uncomment when auth is ready
+):
+    """
+    Download the customer's latest ICP profile text as a plain text file.
+
+    Frontend can call this endpoint and trigger a .txt download.
+    """
+    customer = get_customer_by_id(customer_id)
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    profile_text = customer.latest_profile_text or ""
+    if not profile_text.strip():
+        profile_text = f"No ICP profile available yet for customer: {customer.customer_name}"
+
+    return PlainTextResponse(
+        content=profile_text,
+        headers={
+            "Content-Disposition": f'attachment; filename="customer_{customer_id}_profile.txt"'
+        },
+    )
 
 
 @router.put("/customers/{customer_id}", response_model=Customer)

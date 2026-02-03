@@ -33,6 +33,9 @@ from app.models.crm import (
     InteractionUpdate,
     QuoteDraftRequest,
     DashboardMetrics,
+    CustomerProfileUpdate,
+    CustomerProfileFeedbackCreate,
+    CustomerProfileFeedback,
 )
 from app.services.ai_service import gemini_chat, gemini_embed, log_conversation_to_rag, search_documents
 
@@ -115,7 +118,11 @@ def get_all_customers(
 
 
 def get_customer_by_id(customer_id: str) -> Optional[Customer]:
-    """Get a single customer by UUID."""
+    """Get a single customer by UUID.
+
+    Also ensures that `latest_profile_text` is populated from the most recent
+    AI-generated profile interaction if the column is still NULL in the DB.
+    """
     supabase: Client = get_supabase_client()
 
     response = (
@@ -125,9 +132,32 @@ def get_customer_by_id(customer_id: str) -> Optional[Customer]:
         .execute()
     )
 
-    if response.data:
-        return Customer(**response.data[0])
-    return None
+    if not response.data:
+        return None
+
+    row = response.data[0]
+
+    # If latest_profile_text is missing/empty, try to derive it from interactions
+    latest_profile_text = row.get("latest_profile_text") or None
+
+    if not latest_profile_text:
+        try:
+            interactions = get_interactions_for_customer(customer_id, limit=1, offset=0)
+        except Exception as e:
+            logging.warning(f"Failed to derive latest_profile_text from interactions for {customer_id}: {str(e)}")
+            interactions = []
+
+        if interactions:
+            inter = interactions[0]
+            # Prefer AI response (which usually contains the ICP), fall back to input_text
+            derived_text = (inter.ai_response or inter.input_text or "").strip()
+            if derived_text:
+                row["latest_profile_text"] = derived_text
+                # Use interaction created_at as a reasonable profile-updated timestamp if missing
+                if not row.get("latest_profile_updated_at"):
+                    row["latest_profile_updated_at"] = getattr(inter, "created_at", None)
+
+    return Customer(**row)
 
 
 def get_customers_count() -> int:
@@ -348,13 +378,40 @@ def build_customer_profile(customer_id: str, user_id: Optional[str] = None) -> C
         logging.warning(f"LinkedIn search failed: {str(e)}")
         linkedin_context = ""
     
-    # Step 4: Combine all context
+    # Step 4: Combine all context (including direct CRM interactions)
     context = ""
+
+    # 4a) RAG conversations
     if relevant_docs:
-        context += "\nRelevant conversations:\n"
+        context += "\nRelevant conversations from past AI chats:\n"
         for doc in relevant_docs:
             context += f"\n{doc.get('content', '')}\n"
     
+    # 4b) Direct CRM interactions for this customer
+    try:
+        interactions = get_interactions_for_customer(
+            customer_id=str(customer.customer_id),
+            limit=20,
+            offset=0,
+        )
+    except Exception as e:
+        logging.warning(f"Failed to fetch interactions for customer {customer.customer_id}: {str(e)}")
+        interactions = []
+
+    if interactions:
+        context += "\nRecent CRM interactions with this customer (newest first):\n"
+        for inter in interactions:
+            ts = getattr(inter, "created_at", None)
+            ts_str = ts.isoformat() if ts else "unknown_time"
+            input_text = (inter.input_text or "").strip()
+            ai_resp = (inter.ai_response or "").strip()
+            context += f"\n[Interaction at {ts_str}]\n"
+            if input_text:
+                context += f"Sales/Customer note: {input_text}\n"
+            if ai_resp:
+                context += f"AI response/summary: {ai_resp}\n"
+
+    # 4c) External web + LinkedIn context
     if web_context:
         context += "\nWeb Search Results:\n"
         context += web_context
@@ -435,6 +492,13 @@ Volume opportunity vs LeanChem capacity
 LeanChem's ability to solve supply or technical pain points (e.g., forex, lead time, performance)
 
 Competitive pressure and likelihood of switching
+
+Interaction Review (from CRM)
+
+Before you recommend next steps, briefly review the most recent CRM interactions included in the context:
+- Summarize what has already happened with this customer (meetings, quotes, objections, follow-ups).
+- Highlight current stage of the relationship and any clear blockers or momentum signals.
+- Use this interaction-review to justify and prioritize the recommended actions.
 
 Strategic Insights & Action Plan
 
@@ -587,11 +651,16 @@ Use the exact category names as keys (lowercase, underscores for spaces)."""
         # If no JSON found, set defaults for all categories
         product_scores = {cat: 0 for cat in categories_list}
     
-    # Update the customer record with product alignment scores
+    # Update the customer record with product alignment scores and latest ICP text
+    update_payload: Dict[str, Any] = {}
     if product_scores:
-        supabase.table("customers").update({
-            "product_alignment_scores": product_scores
-        }).eq("customer_id", customer.customer_id).execute()
+        update_payload["product_alignment_scores"] = product_scores
+    # Also store the full ICP profile text so ICP workspace can read it directly
+    update_payload["latest_profile_text"] = profile_text
+    update_payload["latest_profile_updated_at"] = datetime.utcnow().isoformat()
+
+    if update_payload:
+        supabase.table("customers").update(update_payload).eq("customer_id", customer.customer_id).execute()
 
     # Store as an interaction so the history view shows it.
     interaction_payload = InteractionCreate(
@@ -743,8 +812,180 @@ def create_interaction(
 
     if not response.data:
         raise RuntimeError("Failed to create interaction")
+    interaction_row = response.data[0]
 
-    return Interaction(**response.data[0])
+    # ------------------------------------------------------
+    # Enqueue async ICP profile update job (deduplicated)
+    # ------------------------------------------------------
+    try:
+        # Basic dedupe: if there is already a queued/processing job
+        # for this customer, don't enqueue another one.
+        existing_jobs = (
+            supabase.table("profile_update_jobs")
+            .select("id, status")
+            .eq("customer_id", customer_id)
+            .in_("status", ["queued", "processing"])
+            .limit(1)
+            .execute()
+        )
+
+        if not existing_jobs.data:
+            job_payload: Dict[str, Any] = {
+                "customer_id": customer_id,
+                "interaction_id": interaction_row.get("id"),
+                "status": "queued",
+            }
+
+            # If this interaction was linked to a specific pipeline, propagate it
+            pipeline_id = interaction_row.get("pipeline_id")
+            if pipeline_id:
+                job_payload["pipeline_id"] = pipeline_id
+
+            supabase.table("profile_update_jobs").insert(job_payload).execute()
+    except Exception as e:
+        # Fail-safe: interaction creation should NOT fail just because
+        # job enqueue failed. Log and continue.
+        logging.warning(
+            f"Failed to enqueue profile_update_jobs for customer {customer_id}: {e}"
+        )
+
+    return Interaction(**interaction_row)
+
+
+def update_customer_profile_text(
+    customer_id: str, profile_update: CustomerProfileUpdate
+) -> Customer:
+    """Update the latest ICP profile text for a customer."""
+    supabase: Client = get_supabase_client()
+
+    # Ensure customer exists
+    customer = get_customer_by_id(customer_id)
+    if not customer:
+        raise ValueError("Customer not found")
+
+    now_iso = datetime.utcnow().isoformat()
+    response = (
+        supabase.table("customers")
+        .update(
+            {
+                "latest_profile_text": profile_update.profile_text,
+                "latest_profile_updated_at": now_iso,
+            }
+        )
+        .eq("customer_id", customer_id)
+        .execute()
+    )
+
+    if not response.data:
+        raise RuntimeError("Failed to update customer profile text")
+
+    return Customer(**response.data[0])
+
+
+def add_customer_profile_feedback(
+    customer_id: str, feedback_in: CustomerProfileFeedbackCreate
+) -> CustomerProfileFeedback:
+    """Store a rating/comment for a customer's ICP profile.
+    
+    If the feedback table doesn't exist yet, logs a warning and returns a mock response
+    (graceful degradation - feedback is optional).
+    """
+    supabase: Client = get_supabase_client()
+
+    # Basic validation: rating 1-5
+    if feedback_in.rating < 1 or feedback_in.rating > 5:
+        raise ValueError("rating must be between 1 and 5")
+
+    # Ensure customer exists
+    customer = get_customer_by_id(customer_id)
+    if not customer:
+        raise ValueError("Customer not found")
+
+    try:
+        payload = {
+            "customer_id": customer_id,
+            "rating": feedback_in.rating,
+            "comment": feedback_in.comment,
+        }
+
+        response = supabase.table("customer_profile_feedback").insert(payload).execute()
+        if not response.data:
+            raise RuntimeError("Failed to insert feedback")
+
+        row = response.data[0]
+        return CustomerProfileFeedback(
+            id=row["id"],
+            customer_id=row["customer_id"],
+            rating=row["rating"],
+            comment=row.get("comment"),
+            user_id=row.get("user_id"),
+            created_at=row.get("created_at"),
+        )
+    except Exception as e:
+        # If table doesn't exist (PGRST205), log and return a mock response
+        # This allows the UI to work without the feedback table
+        error_msg = str(e)
+        if "PGRST205" in error_msg or "customer_profile_feedback" in error_msg.lower():
+            logging.warning(
+                f"Feedback table not found, feedback not saved. "
+                f"To enable feedback, run: backend/scripts/add_customer_profile_feedback.sql. "
+                f"Error: {error_msg}"
+            )
+            # Return a mock response so the frontend doesn't break
+            from uuid import uuid4
+            from datetime import datetime
+            return CustomerProfileFeedback(
+                id=str(uuid4()),
+                customer_id=customer_id,
+                rating=feedback_in.rating,
+                comment=feedback_in.comment,
+                user_id=None,
+                created_at=datetime.utcnow().isoformat(),
+            )
+        # Re-raise other unexpected errors
+        raise
+
+
+def list_customer_profile_feedback(
+    customer_id: str, limit: int = 10
+) -> List[CustomerProfileFeedback]:
+    """Return recent feedback entries for a customer's profile.
+    
+    If the feedback table doesn't exist yet, returns an empty list (graceful degradation).
+    """
+    supabase: Client = get_supabase_client()
+
+    try:
+        response = (
+            supabase.table("customer_profile_feedback")
+            .select("*")
+            .eq("customer_id", customer_id)
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+
+        rows = response.data or []
+        return [
+            CustomerProfileFeedback(
+                id=row["id"],
+                customer_id=row["customer_id"],
+                rating=row["rating"],
+                comment=row.get("comment"),
+                user_id=row.get("user_id"),
+                created_at=row.get("created_at"),
+            )
+            for row in rows
+        ]
+    except Exception as e:
+        # If table doesn't exist (PGRST205) or any other error, return empty list
+        # This allows the feature to work without the feedback table
+        error_msg = str(e)
+        if "PGRST205" in error_msg or "customer_profile_feedback" in error_msg.lower():
+            logging.warning(f"Feedback table not found, returning empty list. Error: {error_msg}")
+            return []
+        # Re-raise other unexpected errors
+        raise
 
 
 def update_interaction(
@@ -1068,6 +1309,27 @@ def chat_with_customer(
 
     memories_str = "\n\n".join(history_lines) if history_lines else "No past interactions yet."
 
+    # 2.5) Fetch sales pipelines for this customer to provide pipeline context
+    sales_pipelines = []
+    try:
+        # Import here to avoid circular import
+        from app.services.sales_pipeline_service import list_sales_pipelines
+        sales_pipelines = list_sales_pipelines(
+            limit=20,
+            customer_id=str(customer.customer_id),
+        )
+    except Exception:
+        pass  # Don't fail if pipeline service is unavailable
+    
+    pipeline_context = ""
+    if sales_pipelines:
+        pipeline_context = f"\n\nSales Pipeline Information ({len(sales_pipelines)} pipeline(s)):\n"
+        for idx, p in enumerate(sales_pipelines[:10], 1):  # Show up to 10 pipelines
+            amount_str = f"{p.amount or 0:,.2f} {p.currency or 'USD'}" if p.amount else "Not set"
+            pipeline_context += f"- Pipeline {idx}: Stage: {p.stage}, Amount: {amount_str}, Expected Close: {p.expected_close_date or 'Not set'}\n"
+    else:
+        pipeline_context = "\n\nSales Pipeline Information: No active pipelines found for this customer.\n"
+
     customer_context = (
         f"Customer name: {customer.customer_name}\n"
         f"Display ID: {customer.display_id or '—'}\n"
@@ -1079,11 +1341,12 @@ def chat_with_customer(
     system_prompt = f"""
 You are a helpful AI assistant specialized in chemical trading and CRM.
 If the user asks about a specific customer, use the customer's most relevant past interactions below.
-Also use the provided memories and any relevant conversations from the database.
+Also use the provided memories, sales pipeline information, and any relevant conversations from the database.
 If you don't find relevant information, say so and reason transparently.
 
 Customer context:
 {customer_context}
+{pipeline_context}
 
 User Memories:
 {memories_str}

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, Customer, CustomerListResponse } from "../../services/api";
-import { Search, Users, Calendar, X } from "lucide-react";
+import { Search, Users } from "lucide-react";
 
 // Sales stage definitions (Brian Tracy 7-stage process)
 const SALES_STAGES: Record<string, { name: string; color: string; bgColor: string }> = {
@@ -36,32 +36,15 @@ export function CustomerListPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  const [startDate, setStartDate] = useState<string>("");
-  const [endDate, setEndDate] = useState<string>("");
 
-  // Calculate date 15 days ago as default
-  useEffect(() => {
-    const today = new Date();
-    const fifteenDaysAgo = new Date(today);
-    fifteenDaysAgo.setDate(today.getDate() - 15);
-    setStartDate(fifteenDaysAgo.toISOString().split("T")[0]);
-    setEndDate(today.toISOString().split("T")[0]);
-  }, []);
-
-  async function fetchCustomers(query?: string, dateStart?: string, dateEnd?: string) {
+  async function fetchCustomers(query?: string) {
     try {
       setLoading(true);
       setError(null);
 
-      const params: Record<string, string | number> = { limit: 50, offset: 0 };
+      const params: Record<string, string | number> = { limit: 100, offset: 0 };
       if (query && query.trim().length > 0) {
         params.q = query.trim();
-      }
-      if (dateStart) {
-        params.start_date = dateStart;
-      }
-      if (dateEnd) {
-        params.end_date = dateEnd;
       }
 
       const res = await api.get<CustomerListResponse>("/crm/customers", {
@@ -78,22 +61,13 @@ export function CustomerListPage() {
   }
 
   useEffect(() => {
-    if (startDate || endDate) {
-      fetchCustomers(search, startDate, endDate);
-    } else {
-      fetchCustomers(search);
-    }
+    fetchCustomers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [startDate, endDate]);
+  }, []);
 
   function handleSearchSubmit(e: React.FormEvent) {
     e.preventDefault();
-    fetchCustomers(search, startDate, endDate);
-  }
-
-  function clearDateFilter() {
-    setStartDate("");
-    setEndDate("");
+    fetchCustomers(search);
   }
 
   return (
@@ -104,32 +78,24 @@ export function CustomerListPage() {
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
             <div className="space-y-2">
               <p className="inline-flex items-center text-xs font-medium uppercase tracking-[0.25em] text-slate-400">
-                CRM · Customer Directory
+                CRM · ICP Workspace
               </p>
               <div className="flex items-center gap-2">
                 <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-slate-50">
-                  Customers
+                  Ideal Customer Profiles
                 </h1>
                 <span className="inline-flex items-center gap-1 rounded-full bg-slate-800/80 px-2.5 py-1 text-[11px] font-medium text-slate-200 border border-slate-700">
-                  <Users size={14} className="text-emerald-400" />
-                  {total} total
+                  <Users size={14} className="text-purple-400" />
+                  {total} customers
                 </span>
               </div>
               <p className="text-xs sm:text-sm text-slate-300 max-w-xl">
-                Browse and search customers. For full management (add / edit / delete),
-                use the{" "}
-                <Link
-                  to="/crm/customers/manage"
-                  className="font-semibold text-emerald-300 hover:text-emerald-200 underline underline-offset-2"
-                >
-                  Manage Customers
-                </Link>{" "}
-                workspace.
+                View, edit, download, and rate AI-generated Ideal Customer Profiles. Click on a customer to manage their ICP.
               </p>
             </div>
 
-            {/* Search and date filter */}
-            <div className="w-full md:w-auto space-y-2">
+            {/* Search */}
+            <div className="w-full md:w-auto">
               <form
                 onSubmit={handleSearchSubmit}
                 className="w-full md:w-[360px] lg:w-[420px]"
@@ -144,47 +110,17 @@ export function CustomerListPage() {
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                     placeholder="Search by customer name..."
-                    className="w-full rounded-full border border-slate-600 bg-slate-900/70 pl-9 pr-28 py-2.5 text-sm text-slate-50 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/70 focus:border-blue-500/70"
+                    className="w-full rounded-full border border-slate-600 bg-slate-900/70 pl-9 pr-28 py-2.5 text-sm text-slate-50 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-purple-500/70 focus:border-purple-500/70"
                   />
                   <button
                     type="submit"
                     disabled={loading}
-                    className="absolute right-1.5 top-1/2 -translate-y-1/2 inline-flex items-center justify-center rounded-full bg-blue-500 px-4 py-1.5 text-xs font-semibold text-white shadow-sm shadow-blue-500/40 hover:bg-blue-400 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+                    className="absolute right-1.5 top-1/2 -translate-y-1/2 inline-flex items-center justify-center rounded-full bg-purple-500 px-4 py-1.5 text-xs font-semibold text-white shadow-sm shadow-purple-500/40 hover:bg-purple-400 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
                   >
                     {loading ? "Searching..." : "Search"}
                   </button>
                 </div>
               </form>
-              
-              {/* Date filter */}
-              <div className="flex items-center gap-2 flex-wrap">
-                <Calendar size={16} className="text-slate-400" />
-                <div className="flex items-center gap-2">
-                  <input
-                    type="date"
-                    value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
-                    className="rounded-lg border border-slate-600 bg-slate-900/70 px-2.5 py-1.5 text-xs text-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-500/70 focus:border-blue-500/70"
-                  />
-                  <span className="text-xs text-slate-400">to</span>
-                  <input
-                    type="date"
-                    value={endDate}
-                    onChange={(e) => setEndDate(e.target.value)}
-                    className="rounded-lg border border-slate-600 bg-slate-900/70 px-2.5 py-1.5 text-xs text-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-500/70 focus:border-blue-500/70"
-                  />
-                  {(startDate || endDate) && (
-                    <button
-                      onClick={clearDateFilter}
-                      className="inline-flex items-center gap-1 rounded-lg border border-slate-600 bg-slate-900/70 px-2.5 py-1.5 text-xs text-slate-300 hover:bg-slate-800/70 transition-colors"
-                      title="Clear date filter"
-                    >
-                      <X size={14} />
-                      Clear
-                    </button>
-                  )}
-                </div>
-              </div>
             </div>
           </div>
         </main>
@@ -203,31 +139,18 @@ export function CustomerListPage() {
             <div className="space-y-0.5">
               <p className="text-xs font-medium text-slate-500">
                 Showing {customers.length} of {total} customers
+                {search.trim() && (
+                  <span className="ml-2 text-slate-400">
+                    • Filtered by: <span className="font-mono">{search.trim()}</span>
+                  </span>
+                )}
               </p>
-              {(search.trim() || startDate || endDate) && (
-                <p className="text-[11px] text-slate-400">
-                  {search.trim() && (
-                    <>Filtered by name: <span className="font-mono">{search.trim()}</span></>
-                  )}
-                  {(startDate || endDate) && (
-                    <>
-                      {search.trim() && " • "}
-                      Filtered by interactions:{" "}
-                      {startDate && endDate
-                        ? `${startDate} to ${endDate}`
-                        : startDate
-                        ? `from ${startDate}`
-                        : `until ${endDate}`}
-                    </>
-                  )}
-                </p>
-              )}
             </div>
             <Link
-              to="/crm/customers/manage"
+              to="/crm/customers/new"
               className="inline-flex items-center gap-1.5 rounded-full border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-colors"
             >
-              Open Manage Customers
+              Add Customer
             </Link>
           </div>
 
@@ -239,14 +162,7 @@ export function CustomerListPage() {
 
           {!loading && customers.length === 0 ? (
             <div className="px-6 py-8 text-center text-sm text-slate-500">
-              No customers found. Try adjusting your search or{" "}
-              <Link
-                to="/crm/customers/manage"
-                className="font-semibold text-blue-600 hover:text-blue-500"
-              >
-                add a new customer
-              </Link>
-              .
+              No customers found. Try adjusting your search or add a new customer from the CRM home page.
             </div>
           ) : (
             <div className="px-3 sm:px-4 pb-4">
@@ -263,10 +179,10 @@ export function CustomerListPage() {
                         Name
                       </th>
                       <th className="px-3 py-2 text-left text-xs font-semibold text-slate-500">
-                        Sales Stage
+                        ICP Status
                       </th>
                       <th className="px-3 py-2 text-left text-xs font-semibold text-slate-500">
-                        Created
+                        Last Updated
                       </th>
                       <th className="px-3 py-2 text-right text-xs font-semibold text-slate-500">
                         Actions
@@ -297,21 +213,31 @@ export function CustomerListPage() {
                             </div>
                           </td>
                           <td className="px-3 py-2 align-middle">
-                            {getSalesStageBadge(c.sales_stage) || (
-                              <span className="text-[11px] text-slate-400 italic">Not set</span>
+                            {c.latest_profile_text ? (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 border border-emerald-200">
+                                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                                Has ICP
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600 border border-slate-200">
+                                <span className="h-1.5 w-1.5 rounded-full bg-slate-400" />
+                                No ICP
+                              </span>
                             )}
                           </td>
                           <td className="px-3 py-2 align-middle text-xs text-slate-500">
-                            {c.created_at
+                            {c.latest_profile_updated_at
+                              ? new Date(c.latest_profile_updated_at).toLocaleDateString()
+                              : c.created_at
                               ? new Date(c.created_at).toLocaleDateString()
                               : "—"}
                           </td>
                           <td className="px-3 py-2 align-middle text-right">
                             <Link
-                              to={`/crm/customers/${c.customer_id}`}
-                              className="inline-flex items-center rounded-full bg-blue-500 px-3 py-1.5 text-xs font-semibold text-white shadow-sm shadow-blue-500/40 hover:bg-blue-400 hover:shadow-blue-500/60 transition-colors"
+                              to={`/crm/customers/${c.customer_id}/profile`}
+                              className="inline-flex items-center rounded-full bg-purple-500 px-3 py-1.5 text-xs font-semibold text-white shadow-sm shadow-purple-500/40 hover:bg-purple-400 hover:shadow-purple-500/60 transition-colors"
                             >
-                              Open
+                              {c.latest_profile_text ? "View ICP" : "Create ICP"}
                             </Link>
                           </td>
                         </tr>
@@ -337,20 +263,30 @@ export function CustomerListPage() {
                           <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 border border-slate-200 font-mono">
                             ID: {c.display_id ?? "—"}
                           </span>
-                          {getSalesStageBadge(c.sales_stage)}
+                          {c.latest_profile_text ? (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 border border-emerald-200">
+                              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                              Has ICP
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600 border border-slate-200">
+                              <span className="h-1.5 w-1.5 rounded-full bg-slate-400" />
+                              No ICP
+                            </span>
+                          )}
                           <span>
-                            Created:{" "}
-                            {c.created_at
-                              ? new Date(c.created_at).toLocaleDateString()
+                            Updated:{" "}
+                            {c.latest_profile_updated_at
+                              ? new Date(c.latest_profile_updated_at).toLocaleDateString()
                               : "—"}
                           </span>
                         </div>
                       </div>
                       <Link
-                        to={`/crm/customers/${c.customer_id}`}
-                        className="inline-flex items-center rounded-full bg-blue-500 px-3 py-1.5 text-[11px] font-semibold text-white shadow-sm shadow-blue-500/40 hover:bg-blue-400 hover:shadow-blue-500/60 transition-colors"
+                        to={`/crm/customers/${c.customer_id}/profile`}
+                        className="inline-flex items-center rounded-full bg-purple-500 px-3 py-1.5 text-[11px] font-semibold text-white shadow-sm shadow-purple-500/40 hover:bg-purple-400 hover:shadow-purple-500/60 transition-colors"
                       >
-                        Open
+                        {c.latest_profile_text ? "View ICP" : "Create ICP"}
                       </Link>
                     </div>
                   </div>

@@ -23,6 +23,7 @@ import { MarketPage } from "./pages/pms/MarketPage";
 import { SalesPipelinePage } from "./pages/sales/SalesPipelinePage";
 import { PipelineDetailPage } from "./pages/sales/PipelineDetailPage";
 import { StockAvailabilityPage } from "./pages/stock/StockAvailabilityPage";
+import { GeneralStockAvailabilityPage } from "./pages/stock/GeneralStockAvailabilityPage";
 import { ProductDetailPage } from "./pages/stock/ProductDetailPage";
 import { ProductLabelStockPage } from "./pages/stock/ProductLabelStockPage";
 import { ProtectedRoute } from "./components/ProtectedRoute";
@@ -268,6 +269,14 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <StockAvailabilityPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/stock/general-availability"
+            element={
+              <ProtectedRoute>
+                <GeneralStockAvailabilityPage />
               </ProtectedRoute>
             }
           />

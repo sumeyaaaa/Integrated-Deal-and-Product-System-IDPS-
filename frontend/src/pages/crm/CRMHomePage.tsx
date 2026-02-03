@@ -8,40 +8,43 @@ import {
   Download,
   ArrowRight,
   Sparkles,
+  UserPlus,
+  Target,
 } from "lucide-react";
 
 const features = [
     {
-      icon: Users,
-      title: "Manage Customers",
+      icon: UserPlus,
+      title: "Add Customer",
       description:
-        "Add, edit, and delete customers. Create new customer records with LeanChem-style display IDs.",
-      href: "/crm/customers/manage",
-      cta: "Manage customers",
+        "Create new customer records with company details, website, LinkedIn, and primary contact information.",
+      href: "/crm/customers/new",
+      cta: "Add customer",
       accent: "from-blue-600 via-blue-500 to-cyan-500",
       accentHover: "group-hover:shadow-blue-500/40",
       bgAccent: "bg-blue-500/20",
+    },
+    {
+      icon: Target,
+      title: "ICP Workspace",
+      description:
+        "View and manage Ideal Customer Profiles. Edit, download, rate, and provide feedback to improve AI-generated profiles.",
+      href: "/crm/customers",
+      cta: "Open ICP workspace",
+      accent: "from-purple-600 via-purple-500 to-pink-500",
+      accentHover: "group-hover:shadow-purple-500/40",
+      bgAccent: "bg-purple-500/20",
     },
     {
       icon: FileText,
       title: "Customer Interactions & History",
       description:
         "View, add, edit, and delete customer interactions. Chat with AI assistant and manage conversation history.",
-      href: "/crm/customers",
+      href: "/crm/customers/manage",
       cta: "View interactions",
       accent: "from-emerald-600 via-emerald-500 to-teal-500",
       accentHover: "group-hover:shadow-emerald-500/40",
       bgAccent: "bg-emerald-500/20",
-    },
-    {
-      icon: Zap,
-      title: "Create quotation drafts",
-      description: "Capture basic quotation details for a customer. Connect it to your PDF templates and price logic.",
-      href: "/crm/quotes/new",
-      cta: "Create quotation",
-      accent: "from-orange-600 via-orange-500 to-red-500",
-      accentHover: "group-hover:shadow-orange-500/40",
-      bgAccent: "bg-orange-500/20",
     },
     {
       icon: BarChart3,
@@ -114,7 +117,7 @@ export function CRMHomePage() {
               </p>
 
               {/* CTA Buttons */}
-              <div className="flex flex-col sm:flex-row gap-4 pt-4">
+              <div className="flex flex-col sm:flex-row gap-4 pt-4 flex-wrap">
                 <Link
                   to="/crm/customers/new"
                   className="inline-flex items-center justify-center px-8 py-4 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-600 text-white font-bold text-lg transition-all duration-300 hover:shadow-2xl hover:shadow-blue-500/40 hover:-translate-y-1 active:translate-y-0 group"
@@ -127,6 +130,12 @@ export function CRMHomePage() {
                   className="inline-flex items-center justify-center px-8 py-4 rounded-xl border-2 border-slate-600 text-white font-bold text-lg transition-all duration-300 hover:border-slate-400 hover:bg-slate-800/30 backdrop-blur-sm"
                 >
                   Explore Dashboard
+                </Link>
+                <Link
+                  to="/crm/customers"
+                  className="inline-flex items-center justify-center px-8 py-4 rounded-xl border-2 border-emerald-500/70 text-emerald-300 font-bold text-lg transition-all duration-300 hover:border-emerald-300 hover:bg-emerald-500/10 backdrop-blur-sm"
+                >
+                  ICP Workspace
                 </Link>
               </div>
             </div>

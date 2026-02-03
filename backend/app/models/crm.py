@@ -23,6 +23,11 @@ class CustomerBase(BaseModel):
     """Base customer model with common fields"""
     customer_name: str
     display_id: Optional[str] = None
+    website_url: Optional[str] = None
+    linkedin_company_url: Optional[str] = None
+    primary_contact_name: Optional[str] = None
+    primary_contact_email: Optional[str] = None
+    primary_contact_phone: Optional[str] = None
 
 
 class CustomerCreate(CustomerBase):
@@ -35,6 +40,11 @@ class CustomerUpdate(BaseModel):
     customer_name: Optional[str] = None
     display_id: Optional[str] = None
     sales_stage: Optional[str] = None  # Sales stage (1-7)
+    website_url: Optional[str] = None
+    linkedin_company_url: Optional[str] = None
+    primary_contact_name: Optional[str] = None
+    primary_contact_email: Optional[str] = None
+    primary_contact_phone: Optional[str] = None
 
 
 class Customer(CustomerBase):
@@ -43,6 +53,9 @@ class Customer(CustomerBase):
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     sales_stage: Optional[str] = None  # Current sales stage (1-7 from Brian Tracy process)
+    latest_profile_text: Optional[str] = None
+    latest_profile_updated_at: Optional[datetime] = None
+    external_last_fetched_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True  # Allows conversion from SQLAlchemy/ORM objects
@@ -66,6 +79,7 @@ class InteractionBase(BaseModel):
     file_url: Optional[str] = None
     file_type: Optional[str] = None
     tds_id: Optional[UUID] = None
+    pipeline_id: Optional[UUID] = None
 
 
 class InteractionCreate(InteractionBase):
@@ -82,6 +96,7 @@ class InteractionUpdate(BaseModel):
     file_url: Optional[str] = None
     file_type: Optional[str] = None
     tds_id: Optional[UUID] = None
+    pipeline_id: Optional[UUID] = None
 
 
 class Interaction(InteractionBase):
@@ -169,5 +184,29 @@ class DashboardMetrics(BaseModel):
     total_interactions: int
     customers_with_interactions: int
     sales_stages_distribution: Dict[str, int]  # {"1": 5, "2": 3, ...}
+
+
+class CustomerProfileUpdate(BaseModel):
+    """Payload to update the AI-generated ICP profile text for a customer."""
+
+    profile_text: str
+
+
+class CustomerProfileFeedbackCreate(BaseModel):
+    """Payload for submitting a rating/comment on a customer's ICP profile."""
+
+    rating: int  # 1-5
+    comment: Optional[str] = None
+
+
+class CustomerProfileFeedback(BaseModel):
+    """Feedback entry returned to the frontend."""
+
+    id: UUID
+    customer_id: UUID
+    rating: int
+    comment: Optional[str] = None
+    user_id: Optional[UUID] = None
+    created_at: Optional[datetime] = None
 
 

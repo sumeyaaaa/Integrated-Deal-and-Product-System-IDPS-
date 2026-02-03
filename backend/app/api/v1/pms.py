@@ -11,10 +11,13 @@ HTTP endpoints for Product Management System functionality:
 """
 
 import logging
-from typing import Optional
+from typing import Optional, List
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, Query, Depends, UploadFile, File
+from fastapi import APIRouter, HTTPException, Query, Depends, UploadFile, File, Body
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +42,10 @@ from app.models.pms import (
     CostingPricingCreate,
     CostingPricingUpdate,
     CostingPricingListResponse,
+    PartnerChemical,
+    PartnerChemicalCreate,
+    PartnerChemicalUpdate,
+    PartnerChemicalListResponse,
 )
 from app.services.pms_service import (
     list_chemical_types,
@@ -72,6 +79,15 @@ from app.services.pms_service import (
     update_costing_pricing,
     delete_costing_pricing,
     process_tds_file_with_ai,
+    list_partner_chemicals,
+    count_partner_chemicals,
+    create_partner_chemical,
+    get_partner_chemical_by_id,
+    update_partner_chemical,
+    delete_partner_chemical,
+    get_all_vendors,
+    get_all_product_categories,
+    get_all_sub_categories,
 )
 from app.services.file_service import upload_file_to_supabase, ensure_bucket_exists
 from app.dependencies import get_current_user
@@ -551,6 +567,195 @@ async def delete_costing_pricing_endpoint(partner_id: str, tds_id: str):
         return None
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error deleting pricing record: {str(e)}")
+
+
+# =============================
+# PARTNER CHEMICALS
+# =============================
+# IMPORTANT: Specific routes (vendors, categories) must come BEFORE parameterized routes
+# to avoid FastAPI matching "sub-categories" as a UUID parameter
+
+
+@router.get("/partner-chemicals", response_model=PartnerChemicalListResponse)
+async def get_partner_chemicals(
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    vendor: Optional[str] = Query(None),
+    product_category: Optional[str] = Query(None),
+    sub_category: Optional[str] = Query(None),
+    # user: dict = Depends(get_current_user),
+):
+    """List partner chemicals with optional filters."""
+    try:
+        chemicals = list_partner_chemicals(
+            limit=limit,
+            offset=offset,
+            vendor=vendor,
+            product_category=product_category,
+            sub_category=sub_category,
+        )
+        total = count_partner_chemicals()
+        return PartnerChemicalListResponse(partner_chemicals=chemicals, total=total)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching partner chemicals: {str(e)}")
+
+
+@router.post("/partner-chemicals", response_model=PartnerChemical, status_code=201)
+async def create_partner_chemical_endpoint(
+    body: PartnerChemicalCreate,
+    # user: dict = Depends(get_current_user),
+):
+    """Create a new partner chemical."""
+    try:
+        return create_partner_chemical(body)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error creating partner chemical: {str(e)}")
+
+
+# Specific routes MUST come before parameterized routes
+@router.get("/partner-chemicals/vendors", response_model=List[str])
+async def get_vendors():
+    """Get all unique vendors."""
+    try:
+        return get_all_vendors()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching vendors: {str(e)}")
+
+
+@router.get("/partner-chemicals/product-categories", response_model=List[str])
+async def get_product_categories():
+    """Get all unique product categories."""
+    try:
+        return get_all_product_categories()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching product categories: {str(e)}")
+
+
+@router.get("/partner-chemicals/sub-categories", response_model=List[str])
+async def get_sub_categories():
+    """Get all unique sub categories."""
+    try:
+        return get_all_sub_categories()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching sub categories: {str(e)}")
+
+
+# Parameterized routes come AFTER specific routes
+@router.get("/partner-chemicals/{partner_chemical_id}", response_model=PartnerChemical)
+async def get_partner_chemical(partner_chemical_id: str):
+    """Get a single partner chemical by ID."""
+    chemical = get_partner_chemical_by_id(partner_chemical_id)
+    if not chemical:
+        raise HTTPException(status_code=404, detail="Partner chemical not found")
+    return chemical
+
+
+@router.put("/partner-chemicals/{partner_chemical_id}", response_model=PartnerChemical)
+async def update_partner_chemical_endpoint(partner_chemical_id: str, body: PartnerChemicalUpdate):
+    """Update a partner chemical."""
+    try:
+        return update_partner_chemical(partner_chemical_id, body)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error updating partner chemical: {str(e)}")
+
+
+@router.delete("/partner-chemicals/{partner_chemical_id}", status_code=204)
+async def delete_partner_chemical_endpoint(partner_chemical_id: str):
+    """Delete a partner chemical."""
+    try:
+        delete_partner_chemical(partner_chemical_id)
+        return None
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error deleting partner chemical: {str(e)}")
+
+
+# =============================
+# QUOTATION GENERATION
+# =============================
+
+class QuotationProductRequest(BaseModel):
+    product_name: str
+    brand_name: str
+    unit_price: float
+    quantity: float
+
+
+class QuotationRequest(BaseModel):
+    form_type: str = "Baracoda"
+    products: List[QuotationProductRequest]
+    payment_option: int = 1  # 1-5
+    company_name: Optional[str] = None  # Company name to add next to "To:" in B11
+
+
+@router.post("/generate-quotation", response_class=FileResponse)
+async def generate_quotation_endpoint(request: QuotationRequest = Body(...)):
+    """
+    Generate a quotation Excel file from template.
+    """
+    try:
+        from app.services.quotation_service import generate_quotation, get_template_path
+        
+        logger.info(f"Generating quotation for form_type: {request.form_type}, products: {len(request.products)}")
+        
+        # Get template path
+        template_path = get_template_path(request.form_type)
+        logger.info(f"Template path: {template_path}")
+        
+        if not os.path.exists(template_path):
+            raise FileNotFoundError(f"Template file not found: {template_path}")
+        
+        # Convert products to dict format
+        products = [
+            {
+                "product_name": p.product_name,
+                "brand_name": p.brand_name,
+                "unit_price": p.unit_price,
+                "quantity": p.quantity,
+            }
+            for p in request.products
+        ]
+        
+        logger.info(f"Processing {len(products)} products")
+        
+        # Generate quotation
+        output_path = generate_quotation(
+            template_path=template_path,
+            output_path=None,  # Will create temp file
+            products=products,
+            payment_option=request.payment_option,
+            form_type=request.form_type,
+            company_name=request.company_name,
+        )
+        
+        logger.info(f"Quotation generated at: {output_path}")
+        
+        # Verify file exists and has content
+        if not os.path.exists(output_path):
+            raise IOError(f"Generated file does not exist: {output_path}")
+        
+        file_size = os.path.getsize(output_path)
+        if file_size == 0:
+            raise IOError(f"Generated file is empty (0 bytes): {output_path}")
+        
+        logger.info(f"File size: {file_size} bytes")
+        
+        # Generate filename
+        filename = f"Quotation_{request.form_type}_{os.path.basename(output_path).split('_')[-1]}"
+        
+        return FileResponse(
+            output_path,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            filename=filename,
+            background=None,  # File will be deleted after response
+        )
+    except FileNotFoundError as e:
+        logger.error(f"Template not found: {e}", exc_info=True)
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error generating quotation: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to generate quotation: {str(e)}")
 
 
  

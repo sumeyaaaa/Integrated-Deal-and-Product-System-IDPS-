@@ -13,7 +13,7 @@ import {
   fetchTDS,
   Tds,
 } from "../../services/api";
-import { ChevronDown, ChevronUp, Edit2, Trash2, X, Save, Calendar, Paperclip, TrendingUp, Plus, Package, DollarSign } from "lucide-react";
+import { ChevronDown, ChevronUp, ChevronRight, Edit2, Trash2, X, Save, Calendar, Paperclip, TrendingUp, Plus, Package, DollarSign } from "lucide-react";
 
 export function CustomerDetailPage() {
   const { customerId } = useParams<{ customerId: string }>();
@@ -45,15 +45,6 @@ export function CustomerDetailPage() {
   const [loadingPipelines, setLoadingPipelines] = useState(false);
   const [tdsList, setTdsList] = useState<Tds[]>([]);
   const navigate = useNavigate();
-
-  // Calculate date 15 days ago as default
-  useEffect(() => {
-    const today = new Date();
-    const fifteenDaysAgo = new Date(today);
-    fifteenDaysAgo.setDate(today.getDate() - 15);
-    setStartDate(fifteenDaysAgo.toISOString().split("T")[0]);
-    setEndDate(today.toISOString().split("T")[0]);
-  }, []);
 
   async function fetchCustomerAndInteractions() {
     if (!customerId) return;
@@ -381,10 +372,10 @@ export function CustomerDetailPage() {
               </Link>
             )}
             <Link
-              to="/crm/customers/manage"
+              to="/crm/customers/new"
               className="inline-flex items-center gap-2 rounded-full border border-slate-600 px-4 py-2 text-sm font-medium text-slate-100 hover:bg-slate-800 transition-colors"
             >
-              Manage Customers
+              Add Customer
             </Link>
         <Link
           to="/crm/customers"

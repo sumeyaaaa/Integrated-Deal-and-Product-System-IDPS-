@@ -15,6 +15,7 @@ from contextlib import asynccontextmanager
 import os
 import logging
 from dotenv import load_dotenv
+import threading
 
 # Import our configuration
 from app.config import settings
@@ -62,6 +63,24 @@ async def lifespan(app: FastAPI):
     # - Initialize notification service
     # - Load cache
     # - Start background workers
+
+    # Optionally start the ICP profile update worker in the background.
+    # Control this via environment variable to avoid running workers on every instance.
+    enable_profile_worker = os.getenv("ENABLE_PROFILE_WORKER", "").lower() in {"1", "true", "yes"}
+    worker_thread: threading.Thread | None = None
+    if enable_profile_worker:
+        try:
+            from app.workers.profile_update_worker import ProfileUpdateWorker
+
+            def _run_worker() -> None:
+                worker = ProfileUpdateWorker()
+                worker.run_forever()
+
+            worker_thread = threading.Thread(target=_run_worker, name="profile_update_worker", daemon=True)
+            worker_thread.start()
+            print("ProfileUpdateWorker started in background thread")
+        except Exception as e:
+            print(f"Failed to start ProfileUpdateWorker: {e}")
     
     yield  # Server runs here
     
@@ -165,7 +184,11 @@ app.add_middleware(
     allow_credentials=True,                # Allow cookies/auth
     allow_methods=["*"],                   # Allow all HTTP methods (GET, POST, etc.)
     allow_headers=["*"],                   # Allow all headers
+    expose_headers=["*"],                  # Expose all headers to frontend
 )
+
+# Debug: Print CORS configuration
+print(f"CORS configured with allowed origins: {allow_origins}")
 
 # ============================================
 # HEALTH CHECK ENDPOINT

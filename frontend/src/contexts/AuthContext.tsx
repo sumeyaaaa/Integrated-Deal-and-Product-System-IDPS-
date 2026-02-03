@@ -11,6 +11,13 @@ import { checkEmployeeStatus as checkEmployeeStatusAPI } from "../services/api";
 const FRONTEND_URL =
   import.meta.env.VITE_FRONTEND_URL?.trim() || window.location.origin;
 
+// Debug log to verify which URL is being used
+if (typeof window !== 'undefined') {
+  console.log('🔗 Frontend URL for auth redirects:', FRONTEND_URL);
+  console.log('🔗 VITE_FRONTEND_URL env var:', import.meta.env.VITE_FRONTEND_URL);
+  console.log('🔗 window.location.origin:', window.location.origin);
+}
+
 interface EmployeeData {
   email: string;
   role: EmployeeRole;
@@ -212,8 +219,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       // Send password reset email
+      const redirectUrl = `${FRONTEND_URL}/auth/callback?type=reset`;
+      console.log('📧 Sending password reset email with redirect URL:', redirectUrl);
+      
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${FRONTEND_URL}/auth/callback?type=reset`,
+        redirectTo: redirectUrl,
       });
 
       if (error) {

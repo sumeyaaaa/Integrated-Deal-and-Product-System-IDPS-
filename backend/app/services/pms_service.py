@@ -36,6 +36,9 @@ from app.models.pms import (
     CostingPricing,
     CostingPricingCreate,
     CostingPricingUpdate,
+    PartnerChemical,
+    PartnerChemicalCreate,
+    PartnerChemicalUpdate,
 )
 
 
@@ -785,4 +788,168 @@ def get_all_categories() -> List[str]:
      except Exception:
          # Safe fallback to the original default categories used in the MVP
          return ["Cement", "Dry-Mix", "Admixtures", "Paint & Coatings"]
+
+
+# =============================
+# PARTNER CHEMICALS
+# =============================
+
+
+def list_partner_chemicals(
+    limit: int = 100,
+    offset: int = 0,
+    vendor: Optional[str] = None,
+    product_category: Optional[str] = None,
+    sub_category: Optional[str] = None,
+) -> List[PartnerChemical]:
+    supabase: Client = get_supabase_client()
+    query = supabase.table("partner_chemicals").select("*")
+
+    if vendor:
+        query = query.ilike("vendor", f"%{vendor}%")
+    if product_category:
+        query = query.ilike("product_category", f"%{product_category}%")
+    if sub_category:
+        query = query.ilike("sub_category", f"%{sub_category}%")
+
+    response = (
+        query.order("created_at", desc=True)
+        .limit(limit)
+        .offset(offset)
+        .execute()
+    )
+    return [PartnerChemical(**row) for row in (response.data or [])]
+
+
+def count_partner_chemicals() -> int:
+    supabase: Client = get_supabase_client()
+    response = supabase.table("partner_chemicals").select("id", count="exact").execute()
+    return response.count or 0
+
+
+def create_partner_chemical(body: PartnerChemicalCreate) -> PartnerChemical:
+    supabase: Client = get_supabase_client()
+    payload = body.model_dump(exclude_unset=True)
+    
+    # Convert UUIDs to strings
+    from uuid import UUID
+    def convert_uuids(obj):
+        if isinstance(obj, UUID):
+            return str(obj)
+        elif isinstance(obj, dict):
+            return {k: convert_uuids(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [convert_uuids(item) for item in obj]
+        return obj
+    
+    payload = convert_uuids(payload)
+    
+    response = supabase.table("partner_chemicals").insert(payload).execute()
+    if not response.data:
+        raise RuntimeError("Failed to create partner chemical")
+    return PartnerChemical(**response.data[0])
+
+
+def get_partner_chemical_by_id(partner_chemical_id: str) -> Optional[PartnerChemical]:
+    supabase: Client = get_supabase_client()
+    response = (
+        supabase.table("partner_chemicals")
+        .select("*")
+        .eq("id", partner_chemical_id)
+        .single()
+        .execute()
+    )
+    if response.data:
+        return PartnerChemical(**response.data)
+    return None
+
+
+def update_partner_chemical(partner_chemical_id: str, body: PartnerChemicalUpdate) -> PartnerChemical:
+    supabase: Client = get_supabase_client()
+    existing = get_partner_chemical_by_id(partner_chemical_id)
+    if not existing:
+        raise ValueError("Partner chemical not found")
+    
+    update_data = body.model_dump(exclude_unset=True)
+    if not update_data:
+        return existing
+    
+    # Convert UUIDs to strings
+    from uuid import UUID
+    def convert_uuids(obj):
+        if isinstance(obj, UUID):
+            return str(obj)
+        elif isinstance(obj, dict):
+            return {k: convert_uuids(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [convert_uuids(item) for item in obj]
+        return obj
+    
+    update_data = convert_uuids(update_data)
+    
+    response = (
+        supabase.table("partner_chemicals")
+        .update(update_data)
+        .eq("id", partner_chemical_id)
+        .execute()
+    )
+    if not response.data:
+        raise RuntimeError("Failed to update partner chemical")
+    return PartnerChemical(**response.data[0])
+
+
+def delete_partner_chemical(partner_chemical_id: str) -> bool:
+    supabase: Client = get_supabase_client()
+    response = (
+        supabase.table("partner_chemicals")
+        .delete()
+        .eq("id", partner_chemical_id)
+        .execute()
+    )
+    return True
+
+
+def get_all_vendors() -> List[str]:
+    """Fetch all unique vendors from partner_chemicals table."""
+    supabase: Client = get_supabase_client()
+    try:
+        response = supabase.table("partner_chemicals").select("vendor").execute()
+        vendors_set = set()
+        for row in response.data or []:
+            vendor = (row.get("vendor") or "").strip()
+            if vendor:
+                vendors_set.add(vendor)
+        return sorted(list(vendors_set))
+    except Exception:
+        return []
+
+
+def get_all_product_categories() -> List[str]:
+    """Fetch all unique product categories from partner_chemicals table."""
+    supabase: Client = get_supabase_client()
+    try:
+        response = supabase.table("partner_chemicals").select("product_category").execute()
+        categories_set = set()
+        for row in response.data or []:
+            cat = (row.get("product_category") or "").strip()
+            if cat:
+                categories_set.add(cat)
+        return sorted(list(categories_set))
+    except Exception:
+        return []
+
+
+def get_all_sub_categories() -> List[str]:
+    """Fetch all unique sub categories from partner_chemicals table."""
+    supabase: Client = get_supabase_client()
+    try:
+        response = supabase.table("partner_chemicals").select("sub_category").execute()
+        sub_categories_set = set()
+        for row in response.data or []:
+            sub_cat = (row.get("sub_category") or "").strip()
+            if sub_cat:
+                sub_categories_set.add(sub_cat)
+        return sorted(list(sub_categories_set))
+    except Exception:
+        return []
  

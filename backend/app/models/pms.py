@@ -199,4 +199,52 @@ class CostingPricingListResponse(BaseModel):
     total: int
 
 
+# =============================
+# PARTNER CHEMICALS
+# =============================
+
+
+class PartnerChemicalBase(BaseModel):
+    vendor: str
+    product_category: str
+    sub_category: Optional[str] = None
+    product_name: str
+    brand: Optional[str] = None
+    packing: str
+    price: Optional[float] = None
+    competitive_price: Optional[float] = None
+    cost: Optional[float] = None
+    tds_id: Optional[UUID] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class PartnerChemicalCreate(PartnerChemicalBase):
+    pass
+
+
+class PartnerChemicalUpdate(BaseModel):
+    vendor: Optional[str] = None
+    product_category: Optional[str] = None
+    sub_category: Optional[str] = None
+    product_name: Optional[str] = None
+    brand: Optional[str] = None
+    packing: Optional[str] = None
+    price: Optional[float] = None
+    competitive_price: Optional[float] = None
+    cost: Optional[float] = None
+    tds_id: Optional[UUID] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class PartnerChemical(PartnerChemicalBase):
+    id: UUID
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class PartnerChemicalListResponse(BaseModel):
+    partner_chemicals: List[PartnerChemical]
+    total: int
+
+
  

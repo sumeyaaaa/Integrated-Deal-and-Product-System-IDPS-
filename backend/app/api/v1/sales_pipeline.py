@@ -41,6 +41,7 @@ from app.services.sales_pipeline_service import (
     generate_pipeline_insights,
     get_pipeline_forecast,
     chat_with_pipeline,
+    get_pipeline_versions,
 )
 from app.dependencies import get_current_user
 
@@ -193,6 +194,19 @@ async def get_pipeline(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching pipeline: {str(e)}")
+
+
+@router.get("/sales-pipeline/{pipeline_id}/versions", response_model=SalesPipelineListResponse)
+async def get_pipeline_versions_endpoint(
+    pipeline_id: str,
+    # user: dict = Depends(get_current_user)
+):
+    """Get all versions of a pipeline (history with change reasons)."""
+    try:
+        versions = get_pipeline_versions(pipeline_id)
+        return SalesPipelineListResponse(pipelines=versions, total=len(versions))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching pipeline versions: {str(e)}")
 
 
 @router.post("/sales-pipeline", response_model=SalesPipeline, status_code=201)

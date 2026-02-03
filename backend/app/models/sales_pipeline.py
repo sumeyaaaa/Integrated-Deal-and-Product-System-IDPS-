@@ -27,6 +27,7 @@ PIPELINE_STAGES = [
     "Proposal",
     "Confirmation",
     "Closed",
+    "Lost",
 ]
 
 # Stages that require business_model, unit, and unit_price
@@ -173,6 +174,8 @@ class SalesPipelineUpdate(BaseModel):
     business_unit: Optional[str] = None
     incoterm: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
+    reason_for_stage_change: Optional[str] = Field(None, description="Required when stage changes")
+    reason_for_amount_change: Optional[str] = Field(None, description="Required when amount changes")
 
     @field_validator("stage")
     @classmethod
@@ -250,6 +253,11 @@ class SalesPipeline(SalesPipelineBase):
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     ai_interactions: Optional[List[Dict[str, Any]]] = None
+    parent_pipeline_id: Optional[UUID] = None
+    version_number: Optional[int] = None
+    reason_for_stage_change: Optional[str] = None
+    reason_for_amount_change: Optional[str] = None
+    is_current_version: Optional[bool] = None
 
 
 class SalesPipelineListResponse(BaseModel):

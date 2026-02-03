@@ -38,7 +38,9 @@ import {
   CheckCircle,
   X,
   Activity,
+  FileText,
 } from "lucide-react";
+import { QuotationForm, QuotationFormData, QuotationFormType } from "../../components/QuotationForm";
 
 // Stage colors mapping
 const STAGE_COLORS: Record<PipelineStage, string> = {
@@ -49,6 +51,7 @@ const STAGE_COLORS: Record<PipelineStage, string> = {
   "Proposal": "bg-indigo-100 text-indigo-700 border-indigo-300",
   "Confirmation": "bg-green-100 text-green-700 border-green-300",
   "Closed": "bg-emerald-500 text-white border-emerald-600",
+  "Lost": "bg-red-500 text-white border-red-600",
 };
 
 const PIPELINE_STAGES: PipelineStage[] = [
@@ -59,6 +62,7 @@ const PIPELINE_STAGES: PipelineStage[] = [
   "Proposal",
   "Confirmation",
   "Closed",
+  "Lost",
 ];
 
 // Stages that require business_model, unit, and unit_price
@@ -129,10 +133,16 @@ export function SalesPipelinePage() {
     unit_price: null,
     metadata: null,
   });
+  const [reasonForStageChange, setReasonForStageChange] = useState("");
+  const [reasonForAmountChange, setReasonForAmountChange] = useState("");
 
 
   // Delete state
   const [deleting, setDeleting] = useState<string | null>(null);
+
+  // Quotation form state
+  const [showQuotationForm, setShowQuotationForm] = useState(false);
+  const [quotationPipelineId, setQuotationPipelineId] = useState<string | null>(null);
 
   // Ref to track if we've already processed edit params (prevent infinite loops)
   const editProcessedRef = useRef<string | null>(null);
@@ -409,6 +419,8 @@ export function SalesPipelinePage() {
   function closeForm() {
     setShowCreateForm(false);
     setEditingPipeline(null);
+    setReasonForStageChange("");
+    setReasonForAmountChange("");
     setFormData({
       customer_id: "",
       tds_id: null,
@@ -462,6 +474,21 @@ export function SalesPipelinePage() {
       // Force create if not on edit route, regardless of editingPipeline state
       if (isEditRoute && hasEditingPipeline) {
         console.log("UPDATE MODE: Updating existing pipeline", editingPipeline.id);
+        
+        // Check if stage or amount changed and require reasons
+        const stageChanged = editingPipeline.stage !== formData.stage;
+        const amountChanged = editingPipeline.amount !== formData.amount;
+        
+        if (stageChanged && !reasonForStageChange.trim()) {
+          alert("Reason for stage change is required when stage changes");
+          return;
+        }
+        
+        if (amountChanged && !reasonForAmountChange.trim()) {
+          alert("Reason for amount change is required when amount changes");
+          return;
+        }
+        
         setUpdating(true);
         const updateData: SalesPipelineUpdate = {
           customer_id: formData.customer_id,
@@ -481,6 +508,8 @@ export function SalesPipelinePage() {
           business_unit: formData.business_unit,
           incoterm: formData.incoterm,
           metadata: formData.metadata,
+          reason_for_stage_change: stageChanged ? reasonForStageChange : null,
+          reason_for_amount_change: amountChanged ? reasonForAmountChange : null,
         };
         await updateSalesPipeline(editingPipeline.id, updateData);
       } else {
@@ -532,6 +561,41 @@ export function SalesPipelinePage() {
   async function handlePipelineClick(pipelineId: string) {
     // Navigate to detail page instead of opening modal
     navigate(`/sales/pipeline/${pipelineId}`);
+  }
+
+  function handleOpenQuotationForm(pipelineId: string) {
+    setQuotationPipelineId(pipelineId);
+    setShowQuotationForm(true);
+  }
+
+  function handleCloseQuotationForm() {
+    setShowQuotationForm(false);
+    setQuotationPipelineId(null);
+  }
+
+  async function handleSaveQuotation(data: QuotationFormData) {
+    if (!quotationPipelineId) return;
+
+    try {
+      // Save quotation data to pipeline metadata
+      const pipeline = pipelines.find((p) => p.id === quotationPipelineId);
+      if (pipeline) {
+        const updateData: SalesPipelineUpdate = {
+          metadata: {
+            ...(pipeline.metadata || {}),
+            quotation: data,
+            quotation_created_at: new Date().toISOString(),
+          },
+        };
+        await updateSalesPipeline(quotationPipelineId, updateData);
+        alert("Quotation saved successfully!");
+        handleCloseQuotationForm();
+        await loadPipelines();
+      }
+    } catch (err: any) {
+      console.error("Error saving quotation:", err);
+      alert(err?.response?.data?.detail ?? err?.message ?? "Failed to save quotation");
+    }
   }
 
 
@@ -720,6 +784,7 @@ export function SalesPipelinePage() {
 
             <form onSubmit={handleCreate} className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Deal basics */}
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">
                     Customer <span className="text-red-500">*</span>
@@ -782,6 +847,61 @@ export function SalesPipelinePage() {
                   </select>
                 </div>
 
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                    Stage <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    value={formData.stage}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        stage: e.target.value as PipelineStage,
+                      })
+                    }
+                    required
+                    className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  >
+                    {PIPELINE_STAGES.map((stage) => (
+                      <option key={stage} value={stage}>
+                        {stage}
+                      </option>
+                    ))}
+                  </select>
+                  {editingPipeline && editingPipeline.stage !== formData.stage && (
+                    <div className="mt-2">
+                      <label className="block text-sm font-medium text-slate-700 mb-1">
+                        Reason for Stage Change <span className="text-red-500">*</span>
+                      </label>
+                      <textarea
+                        value={reasonForStageChange}
+                        onChange={(e) => setReasonForStageChange(e.target.value)}
+                        required
+                        rows={2}
+                        className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                        placeholder="Explain why the stage is changing..."
+                      />
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                    Expected Close Date
+                  </label>
+                  <input
+                    type="date"
+                    value={formData.expected_close_date || ""}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        expected_close_date: e.target.value || null,
+                      })
+                    }
+                    className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+
                 {formData.chemical_type_id && (
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">
@@ -810,67 +930,6 @@ export function SalesPipelinePage() {
 
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">
-                    Stage <span className="text-red-500">*</span>
-                  </label>
-                  <select
-                    value={formData.stage}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        stage: e.target.value as PipelineStage,
-                      })
-                    }
-                    required
-                    className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                  >
-                    {PIPELINE_STAGES.map((stage) => (
-                      <option key={stage} value={stage}>
-                        {stage}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">
-                    Amount
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={formData.amount !== null && formData.amount !== undefined ? formData.amount : ""}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      setFormData({
-                        ...formData,
-                        amount: value && value !== "" ? parseFloat(value) : null,
-                      });
-                    }}
-                    className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                    placeholder="Enter quantity/amount..."
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">
-                    Expected Close Date
-                  </label>
-                  <input
-                    type="date"
-                    value={formData.expected_close_date || ""}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        expected_close_date: e.target.value || null,
-                      })
-                    }
-                    className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">
                     Lead Source
                   </label>
                   <input
@@ -887,25 +946,7 @@ export function SalesPipelinePage() {
                   />
                 </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">
-                    Contact Per Lead
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.contact_per_lead || ""}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        contact_per_lead: e.target.value || null,
-                      })
-                    }
-                    className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                    placeholder="Contact person name or title..."
-                  />
-                </div>
-
-                {/* Business Model, Unit, Unit Price - Always visible, required only for Validation+ stages */}
+                {/* Commercial details: Business model & unit/amount/pricing */}
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">
                     Business Model
@@ -939,13 +980,38 @@ export function SalesPipelinePage() {
 
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">
+                    Business Unit
+                  </label>
+                  <select
+                    value={formData.business_unit || ""}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        business_unit: (e.target.value as "Hayat" | "Alhadi" | "Bet-chem" | "Barracoda" | "Nyumb-Chem") || null,
+                      })
+                    }
+                    className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  >
+                    <option value="">Select business unit...</option>
+                    <option value="Hayat">Hayat</option>
+                    <option value="Alhadi">Alhadi</option>
+                    <option value="Bet-chem">Bet-chem</option>
+                    <option value="Barracoda">Barracoda</option>
+                    <option value="Nyumb-Chem">Nyumb-Chem</option>
+                  </select>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Internal entity responsible for executing the deal. Hayat/Alhadi/Bet-chem/Barracoda: Import of Record contracts and Stock sales. Nyumb-Chem: Agency models and Direct Import.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
                     Unit
                     {STAGES_REQUIRING_BUSINESS_DETAILS.includes(formData.stage) && (
                       <span className="text-red-500"> *</span>
                     )}
                   </label>
-                  <input
-                    type="text"
+                  <select
                     value={formData.unit || ""}
                     onChange={(e) =>
                       setFormData({
@@ -955,8 +1021,55 @@ export function SalesPipelinePage() {
                     }
                     required={STAGES_REQUIRING_BUSINESS_DETAILS.includes(formData.stage)}
                     className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                    placeholder="e.g., kg, ton, liter..."
+                  >
+                    <option value="">Select unit...</option>
+                    <option value="kg">kg</option>
+                    <option value="ton">ton</option>
+                    <option value="g">g</option>
+                    <option value="L">L</option>
+                    <option value="mL">mL</option>
+                    <option value="drum">drum</option>
+                    <option value="bag">bag</option>
+                    <option value="carton">carton</option>
+                    <option value="pallet">pallet</option>
+                    <option value="unit">unit</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                    Amount (Quantity)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={formData.amount !== null && formData.amount !== undefined ? formData.amount : ""}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setFormData({
+                        ...formData,
+                        amount: value && value !== "" ? parseFloat(value) : null,
+                      });
+                    }}
+                    className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    placeholder="Enter quantity..."
                   />
+                  {editingPipeline && editingPipeline.amount !== formData.amount && (
+                    <div className="mt-2">
+                      <label className="block text-sm font-medium text-slate-700 mb-1">
+                        Reason for Amount Change <span className="text-red-500">*</span>
+                      </label>
+                      <textarea
+                        value={reasonForAmountChange}
+                        onChange={(e) => setReasonForAmountChange(e.target.value)}
+                        required
+                        rows={2}
+                        className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                        placeholder="Explain why the amount is changing..."
+                      />
+                    </div>
+                  )}
                 </div>
 
                 <div>
@@ -1031,32 +1144,6 @@ export function SalesPipelinePage() {
                   </select>
                   <p className="text-xs text-slate-500 mt-1">
                     Identifies who bears the foreign exchange risk and the transaction currency.
-                  </p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">
-                    Business Unit
-                  </label>
-                  <select
-                    value={formData.business_unit || ""}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        business_unit: (e.target.value as "Hayat" | "Alhadi" | "Bet-chem" | "Barracoda" | "Nyumb-Chem") || null,
-                      })
-                    }
-                    className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                  >
-                    <option value="">Select business unit...</option>
-                    <option value="Hayat">Hayat</option>
-                    <option value="Alhadi">Alhadi</option>
-                    <option value="Bet-chem">Bet-chem</option>
-                    <option value="Barracoda">Barracoda</option>
-                    <option value="Nyumb-Chem">Nyumb-Chem</option>
-                  </select>
-                  <p className="text-xs text-slate-500 mt-1">
-                    Internal entity responsible for executing the deal. Hayat/Alhadi/Bet-chem/Barracoda: Import of Record contracts and Stock sales. Nyumb-Chem: Agency models and Direct Import.
                   </p>
                 </div>
 
@@ -1149,114 +1236,120 @@ export function SalesPipelinePage() {
             </div>
           ) : (
             <>
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead className="bg-slate-50 border-b border-slate-200">
-                    <tr>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
-                        Customer
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
-                        Product
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
-                        Stage
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
-                        Amount
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
-                        Expected Close
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
-                        Actions
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-200">
-                    {pipelines.map((pipeline) => (
-                      <tr
-                        key={pipeline.id}
-                        className="hover:bg-slate-50 cursor-pointer transition-colors"
-                        onClick={() => handlePipelineClick(pipeline.id)}
-                      >
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="flex items-center gap-2">
+              <div className="p-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {pipelines.map((pipeline) => (
+                    <div
+                      key={pipeline.id}
+                      className="bg-white rounded-xl border-2 border-slate-200 hover:border-emerald-400 hover:shadow-lg transition-all cursor-pointer p-6 space-y-4"
+                      onClick={() => handlePipelineClick(pipeline.id)}
+                    >
+                      {/* Header */}
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-2">
                             <User className="w-4 h-4 text-slate-400" />
-                            <span className="text-sm font-medium text-slate-900">
+                            <h3 className="text-lg font-bold text-slate-900">
                               {getCustomerName(pipeline.customer_id)}
-                            </span>
+                            </h3>
                           </div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
                           <div className="flex items-center gap-2">
                             <Package className="w-4 h-4 text-slate-400" />
                             <span className="text-sm text-slate-600">
                               {getChemicalTypeName(pipeline.chemical_type_id || pipeline.tds_id)}
                             </span>
                           </div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <span
-                            className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold border ${
-                              STAGE_COLORS[pipeline.stage]
-                            }`}
+                        </div>
+                        <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleOpenQuotationForm(pipeline.id);
+                            }}
+                            className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                            title="Create Quotation"
                           >
-                            {pipeline.stage}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="flex items-center gap-1">
-                            <DollarSign className="w-4 h-4 text-slate-400" />
-                            <span className="text-sm font-medium text-slate-900">
-                              {pipeline.amount 
-                                ? `${pipeline.amount.toLocaleString()} ${pipeline.currency || "USD"}`
-                                : "—"}
-                            </span>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="flex items-center gap-1">
-                            <Calendar className="w-4 h-4 text-slate-400" />
-                            <span className="text-sm text-slate-600">
-                              {formatDate(pipeline.expected_close_date || null)}
-                            </span>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                          <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                // Navigate to edit page for this specific pipeline
-                                navigate(`/sales/pipeline/${pipeline.id}/edit`);
-                              }}
-                              className="text-emerald-600 hover:text-emerald-900"
-                              title="Edit"
-                            >
-                              <Edit2 className="w-4 h-4" />
-                            </button>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDelete(pipeline.id);
-                              }}
-                              disabled={deleting === pipeline.id}
-                              className="text-red-600 hover:text-red-900 disabled:opacity-50"
-                              title="Delete"
-                            >
-                              {deleting === pipeline.id ? (
-                                <Loader2 className="w-4 h-4 animate-spin" />
-                              ) : (
-                                <Trash2 className="w-4 h-4" />
-                              )}
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                            <FileText className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigate(`/sales/pipeline/${pipeline.id}/edit`);
+                            }}
+                            className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                            title="Edit"
+                          >
+                            <Edit2 className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDelete(pipeline.id);
+                            }}
+                            disabled={deleting === pipeline.id}
+                            className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
+                            title="Delete"
+                          >
+                            {deleting === pipeline.id ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <Trash2 className="w-4 h-4" />
+                            )}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Stage Badge */}
+                      <div>
+                        <span
+                          className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold border ${
+                            STAGE_COLORS[pipeline.stage]
+                          }`}
+                        >
+                          {pipeline.stage}
+                        </span>
+                      </div>
+
+                      {/* Amount */}
+                      <div className="flex items-center gap-2">
+                        <DollarSign className="w-5 h-5 text-emerald-600" />
+                        <div>
+                          <p className="text-xs text-slate-500">Amount</p>
+                          <p className="text-lg font-bold text-slate-900">
+                            {pipeline.amount 
+                              ? `${pipeline.amount.toLocaleString()} ${pipeline.currency || "USD"}`
+                              : "—"}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Expected Close Date */}
+                      <div className="flex items-center gap-2">
+                        <Calendar className="w-5 h-5 text-blue-600" />
+                        <div>
+                          <p className="text-xs text-slate-500">Expected Close</p>
+                          <p className="text-sm font-semibold text-slate-900">
+                            {formatDate(pipeline.expected_close_date || null)}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Footer */}
+                      <div className="pt-4 border-t border-slate-200">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handlePipelineClick(pipeline.id);
+                          }}
+                          className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-semibold hover:shadow-lg transition-all"
+                        >
+                          View Details
+                          <ChevronRight className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
 
               {/* Pagination */}
@@ -1290,6 +1383,25 @@ export function SalesPipelinePage() {
           )}
         </div>
       </main>
+
+      {/* Quotation Form Modal */}
+      {showQuotationForm && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-y-auto">
+          <div className="bg-white rounded-xl shadow-xl max-w-6xl w-full my-8">
+            <QuotationForm
+              pipelineId={quotationPipelineId || undefined}
+              customerId={pipelines.find((p) => p.id === quotationPipelineId)?.customer_id}
+              onSave={handleSaveQuotation}
+              onCancel={handleCloseQuotationForm}
+              initialData={
+                quotationPipelineId
+                  ? pipelines.find((p) => p.id === quotationPipelineId)?.metadata?.quotation
+                  : undefined
+              }
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
