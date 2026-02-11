@@ -21,7 +21,7 @@ import threading
 from app.config import settings
 
 # Import database connection (we'll use this later)
-from app.database.connection import get_supabase_client
+from app.database.connection import get_supabase_client, get_supabase_service_client
 
 # Import API routers
 from app.api.v1 import crm, pms, sales_pipeline, stock, auth
@@ -55,9 +55,17 @@ async def lifespan(app: FastAPI):
     # Test database connection
     try:
         supabase = get_supabase_client()
-        print("Database connection successful")
+        print("Database connection successful (anon key)")
     except Exception as e:
-        print(f"Database connection failed: {e}")
+        print(f"Database connection failed (anon key): {e}")
+    
+    # Test service key (used for admin operations like checking employees)
+    try:
+        service_client = get_supabase_service_client()
+        print("Service key connection successful")
+    except Exception as e:
+        print(f"⚠️  Service key connection failed: {e}")
+        print("   This will cause authentication errors. Please check your SUPABASE_SERVICE_KEY in backend/.env")
     
     # You can add more startup tasks here:
     # - Initialize notification service

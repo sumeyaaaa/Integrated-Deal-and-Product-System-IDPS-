@@ -54,7 +54,7 @@ import {
 
 // Stage colors mapping with enhanced colors
 const STAGE_COLORS: Record<PipelineStage, string> = {
-  "Lead ID": "bg-slate-100 text-slate-700 border-slate-300",
+  Lead: "bg-slate-100 text-slate-700 border-slate-300",
   "Discovery": "bg-blue-100 text-blue-700 border-blue-300",
   "Sample": "bg-yellow-100 text-yellow-700 border-yellow-300",
   "Validation": "bg-orange-100 text-orange-700 border-orange-300",
@@ -66,7 +66,7 @@ const STAGE_COLORS: Record<PipelineStage, string> = {
 
 // Stage progression order (sequential stages, Lost is special)
 const STAGE_ORDER: PipelineStage[] = [
-  "Lead ID",
+  "Lead",
   "Discovery",
   "Sample",
   "Validation",
@@ -77,7 +77,7 @@ const STAGE_ORDER: PipelineStage[] = [
 
 // Lost can be reached from any stage
 const SEQUENTIAL_STAGES: PipelineStage[] = [
-  "Lead ID",
+  "Lead",
   "Discovery",
   "Sample",
   "Validation",
@@ -348,12 +348,12 @@ export function PipelineDetailPage() {
 
   function getLatestStageReached(): PipelineStage {
     if (!pipelineVersions || pipelineVersions.length === 0) {
-      return selectedPipeline?.stage || "Lead ID";
+      return selectedPipeline?.stage || "Lead";
     }
     
     // Find the highest sequential stage ever reached in version history
     // (Lost is special and doesn't count as progress)
-    let latestStage: PipelineStage = "Lead ID";
+    let latestStage: PipelineStage = "Lead";
     let highestIndex = -1;
     
     for (const version of pipelineVersions) {
@@ -918,7 +918,7 @@ export function PipelineDetailPage() {
                     </div>
                     {selectedPipeline.tds_id && (
                       <div className="p-4 bg-slate-50 rounded-lg border border-slate-200">
-                        <label className="text-xs font-medium text-slate-500 mb-1 block">Brand (TDS)</label>
+                      <label className="text-xs font-medium text-slate-500 mb-1 block">Vendor (TDS)</label>
                         <p className="text-slate-900 font-semibold">
                           {getBrandName()}
                         </p>

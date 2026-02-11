@@ -71,7 +71,7 @@ def generate_quotation(
     Args:
         template_path: Path to your styled Excel template
         output_path: Where to save the generated file (if None, creates temp file)
-        products: List of product dicts with 'product_name', 'brand_name', 'unit_price', 'quantity'
+        products: List of product dicts with 'product_name', 'vendor_name', 'unit_price', 'quantity'
         payment_option: 1-5 corresponding to payment term options
         form_type: Type of quotation form (Baracoda, Nyumb-Chem, Bet-chem)
     
@@ -420,10 +420,10 @@ def generate_quotation(
                 safe_clear_cell(f"{product_col_price}{row}")
                 safe_clear_cell(f"E{row}")
         
-        # Product name with brand - set to black color
+        # Product name with vendor - set to black color
         product_name = product.get("product_name", "")
-        brand_name = product.get("brand_name", "")
-        full_name = f"{product_name}, {brand_name}" if brand_name else product_name
+        vendor_name = product.get("vendor_name", "")
+        full_name = f"{product_name}, {vendor_name}" if vendor_name else product_name
         
         # SIMPLIFIED: Direct assignment
         if form_type == "Nyumb-Chem":

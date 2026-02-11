@@ -47,7 +47,10 @@ class ChemicalTypeUpdate(BaseModel):
 
 
 class ChemicalType(ChemicalTypeBase):
-    id: UUID
+    # For legacy reasons this used to be a UUID backed by the chemical_types table.
+    # We now serve data from the chemical_full_data table where the primary key is
+    # an integer. Keep the field name the same so existing API/FE contracts still work.
+    id: int
     created_at: Optional[datetime] = None
 
 
@@ -200,30 +203,16 @@ class CostingPricingListResponse(BaseModel):
 
 
 # =============================
+#
 # PARTNER CHEMICALS
 # =============================
-
-
+#
+ 
 class PartnerChemicalBase(BaseModel):
     vendor: str
-    product_category: str
-    sub_category: Optional[str] = None
-    product_name: str
-    brand: Optional[str] = None
-    packing: str
-    price: Optional[float] = None
-    competitive_price: Optional[float] = None
-    cost: Optional[float] = None
-    tds_id: Optional[UUID] = None
+    country: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
-
-
-class PartnerChemicalCreate(PartnerChemicalBase):
-    pass
-
-
-class PartnerChemicalUpdate(BaseModel):
-    vendor: Optional[str] = None
+    # Legacy fields kept for backward compatibility but not used in new schema
     product_category: Optional[str] = None
     sub_category: Optional[str] = None
     product_name: Optional[str] = None
@@ -233,7 +222,26 @@ class PartnerChemicalUpdate(BaseModel):
     competitive_price: Optional[float] = None
     cost: Optional[float] = None
     tds_id: Optional[UUID] = None
+
+
+class PartnerChemicalCreate(PartnerChemicalBase):
+    pass
+
+
+class PartnerChemicalUpdate(BaseModel):
+    vendor: Optional[str] = None
+    country: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
+    # Legacy fields kept for backward compatibility
+    product_category: Optional[str] = None
+    sub_category: Optional[str] = None
+    product_name: Optional[str] = None
+    brand: Optional[str] = None
+    packing: Optional[str] = None
+    price: Optional[float] = None
+    competitive_price: Optional[float] = None
+    cost: Optional[float] = None
+    tds_id: Optional[UUID] = None
 
 
 class PartnerChemical(PartnerChemicalBase):
@@ -244,6 +252,57 @@ class PartnerChemical(PartnerChemicalBase):
 
 class PartnerChemicalListResponse(BaseModel):
     partner_chemicals: List[PartnerChemical]
+    total: int
+
+
+# =============================
+# CHEMICAL FULL DATA
+# =============================
+
+
+class ChemicalFullDataBase(BaseModel):
+    vendor: Optional[str] = None
+    product_category: Optional[str] = None
+    sub_category: Optional[str] = None
+    product_name: Optional[str] = None
+    packing: Optional[str] = None
+    typical_application: Optional[str] = None
+    product_description: Optional[str] = None
+    hs_code: Optional[str] = None
+    price: Optional[float] = None
+    industry: Optional[str] = None
+    sector: Optional[str] = None
+    partner_id: Optional[UUID] = None
+    uuid_id: Optional[UUID] = None  # UUID for linking with pipelines
+
+
+class ChemicalFullDataCreate(ChemicalFullDataBase):
+    pass
+
+
+class ChemicalFullDataUpdate(BaseModel):
+    vendor: Optional[str] = None
+    product_category: Optional[str] = None
+    sub_category: Optional[str] = None
+    product_name: Optional[str] = None
+    packing: Optional[str] = None
+    typical_application: Optional[str] = None
+    product_description: Optional[str] = None
+    hs_code: Optional[str] = None
+    price: Optional[float] = None
+    industry: Optional[str] = None
+    sector: Optional[str] = None
+    partner_id: Optional[UUID] = None
+    uuid_id: Optional[UUID] = None
+
+
+class ChemicalFullData(ChemicalFullDataBase):
+    id: int
+    uuid_id: Optional[UUID] = None
+
+
+class ChemicalFullDataListResponse(BaseModel):
+    chemicals: List[ChemicalFullData]
     total: int
 
 

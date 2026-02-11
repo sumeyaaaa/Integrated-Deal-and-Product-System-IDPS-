@@ -1,6 +1,11 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { fetchPartners, createPartner, Partner, PartnerCreate } from "../../services/api";
+import {
+  fetchPartnerChemicals,
+  createPartnerChemical,
+  PartnerChemical,
+  PartnerChemicalCreate,
+} from "../../services/api";
 import {
   Handshake,
   Search,
@@ -13,7 +18,7 @@ import {
 } from "lucide-react";
 
 export function PartnersPage() {
-  const [partners, setPartners] = useState<Partner[]>([]);
+  const [partners, setPartners] = useState<PartnerChemical[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -24,21 +29,21 @@ export function PartnersPage() {
   // Create form state
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [creating, setCreating] = useState(false);
-  const [formData, setFormData] = useState<PartnerCreate>({
-    partner: "",
-    partner_country: "",
+  const [formData, setFormData] = useState<PartnerChemicalCreate>({
+    vendor: "",
+    country: "",
   });
 
   async function loadPartners() {
     try {
       setLoading(true);
       setError(null);
-      const res = await fetchPartners({
+      const res = await fetchPartnerChemicals({
         limit,
         offset,
-        partner_name: search || undefined,
+        vendor: search || undefined,
       });
-      setPartners(res.partners);
+      setPartners(res.partner_chemicals);
       setTotal(res.total);
     } catch (err: any) {
       console.error(err);
@@ -55,16 +60,16 @@ export function PartnersPage() {
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
-    if (!formData.partner?.trim()) {
-      alert("Partner name is required");
+    if (!formData.vendor?.trim()) {
+      alert("Vendor name is required");
       return;
     }
 
     try {
       setCreating(true);
-      await createPartner(formData);
+      await createPartnerChemical(formData);
       setShowCreateForm(false);
-      setFormData({ partner: "", partner_country: "" });
+      setFormData({ vendor: "", country: "" });
       await loadPartners();
     } catch (err: any) {
       console.error(err);
@@ -100,8 +105,7 @@ export function PartnersPage() {
                 Partner Master Data
               </h1>
               <p className="text-sm text-slate-300 max-w-2xl">
-                Manage partners linked to TDS records. Track partner information and country
-                details.
+                Manage vendor partners. Track vendor information and country details.
               </p>
             </div>
 
@@ -125,12 +129,12 @@ export function PartnersPage() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">
-                    Partner Name <span className="text-rose-500">*</span>
+                    Vendor <span className="text-rose-500">*</span>
                   </label>
                   <input
                     type="text"
-                    value={formData.partner || ""}
-                    onChange={(e) => setFormData({ ...formData, partner: e.target.value })}
+                    value={formData.vendor || ""}
+                    onChange={(e) => setFormData({ ...formData, vendor: e.target.value })}
                     className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
                     required
                   />
@@ -141,9 +145,9 @@ export function PartnersPage() {
                   </label>
                   <input
                     type="text"
-                    value={formData.partner_country || ""}
+                    value={formData.country || ""}
                     onChange={(e) =>
-                      setFormData({ ...formData, partner_country: e.target.value })
+                      setFormData({ ...formData, country: e.target.value })
                     }
                     className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
                     placeholder="e.g., Ethiopia, Kenya"
@@ -168,10 +172,10 @@ export function PartnersPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    setShowCreateForm(false);
-                    setFormData({ partner: "", partner_country: "" });
-                  }}
+                onClick={() => {
+                  setShowCreateForm(false);
+                  setFormData({ vendor: "", country: "" });
+                }}
                   className="px-6 py-2 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 transition-colors"
                 >
                   Cancel
@@ -197,7 +201,7 @@ export function PartnersPage() {
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search partners by name..."
+                placeholder="Search vendors by name..."
                 className="w-full pl-10 pr-4 py-2 rounded-lg border border-slate-300 bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
               />
             </div>
@@ -238,9 +242,9 @@ export function PartnersPage() {
         ) : partners.length === 0 ? (
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-12 text-center">
             <Package className="w-12 h-12 text-slate-400 mx-auto mb-4" />
-            <p className="text-slate-600 font-medium">No partners found</p>
+            <p className="text-slate-600 font-medium">No vendors found</p>
             <p className="text-slate-500 text-sm mt-1">
-              {search ? "Try a different search term" : "Create your first partner to get started"}
+              {search ? "Try a different search term" : "Create your first vendor to get started"}
             </p>
           </div>
         ) : (
@@ -249,7 +253,7 @@ export function PartnersPage() {
             <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
               <p className="text-sm text-slate-600">
                 Showing <span className="font-semibold">{partners.length}</span> of{" "}
-                <span className="font-semibold">{total}</span> partners
+                <span className="font-semibold">{total}</span> vendors
               </p>
             </div>
 
@@ -262,18 +266,18 @@ export function PartnersPage() {
                 >
                   <div className="flex items-start justify-between mb-3">
                     <h3 className="text-lg font-bold text-slate-900">
-                      {partner.partner || "Unnamed Partner"}
+                      {partner.vendor || "Unnamed Vendor"}
                     </h3>
                     <Handshake className="w-5 h-5 text-purple-500 flex-shrink-0" />
                   </div>
 
                   <div className="space-y-2 text-sm">
-                    {partner.partner_country && (
+                    {partner.country && (
                       <div className="flex items-center gap-2">
                         <Globe className="w-4 h-4 text-slate-400" />
                         <span className="text-slate-500">Country:</span>{" "}
                         <span className="font-medium text-slate-700">
-                          {partner.partner_country}
+                          {partner.country}
                         </span>
                       </div>
                     )}

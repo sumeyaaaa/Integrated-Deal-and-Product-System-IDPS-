@@ -6,7 +6,6 @@ import {
   DollarSign,
   ArrowRight,
   Sparkles,
-  Package,
 } from "lucide-react";
 
 const modules = [
@@ -45,18 +44,6 @@ const modules = [
     accentHover: "group-hover:shadow-purple-500/40",
     bgAccent: "bg-purple-500/20",
     emoji: "🤝",
-  },
-  {
-    icon: Package,
-    title: "Partner Chemicals",
-    subtitle: "Brands & Chemicals",
-    description: "View brands aggregated from TDS data with their associated chemicals",
-    href: "/pms/partner-chemicals",
-    cta: "View brands",
-    accent: "from-indigo-600 via-indigo-500 to-purple-500",
-    accentHover: "group-hover:shadow-indigo-500/40",
-    bgAccent: "bg-indigo-500/20",
-    emoji: "📦",
   },
   {
     icon: DollarSign,
@@ -228,7 +215,7 @@ export function PMSHomePage() {
           <div className="max-w-7xl mx-auto">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
               {[
-                { label: "Product Modules", value: "4" },
+                { label: "Product Modules", value: "3" },
                 { label: "Data Integrity", value: "100%" },
                 { label: "AI Integration", value: "Ready" },
                 { label: "Scalability", value: "Enterprise" },

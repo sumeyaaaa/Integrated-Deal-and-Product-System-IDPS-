@@ -20,6 +20,10 @@ import {
   CustomerListResponse,
   fetchBusinessModels,
   fetchCurrencies,
+  fetchVendors,
+  fetchChemicalFullData,
+  ChemicalFullData,
+  fetchPartnerChemicals,
 } from "../../services/api";
 import {
   TrendingUp,
@@ -39,6 +43,8 @@ import {
   X,
   Activity,
   FileText,
+  Folder,
+  ChevronDown,
 } from "lucide-react";
 import { QuotationForm, QuotationFormData, QuotationFormType } from "../../components/QuotationForm";
 
@@ -108,7 +114,10 @@ export function SalesPipelinePage() {
   // Data for dropdowns
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [chemicalTypes, setChemicalTypes] = useState<ChemicalType[]>([]);
+  const [chemicalFullData, setChemicalFullData] = useState<ChemicalFullData[]>([]);
   const [tdsList, setTdsList] = useState<Tds[]>([]);
+  const [vendors, setVendors] = useState<string[]>([]);
+  const [partnerChemicals, setPartnerChemicals] = useState<any[]>([]);
   const [businessModels, setBusinessModels] = useState<string[]>([]);
   const [currencies, setCurrencies] = useState<Currency[]>([]);
 
@@ -120,7 +129,9 @@ export function SalesPipelinePage() {
   const [formData, setFormData] = useState<SalesPipelineCreate>({
     customer_id: "",
     tds_id: null,
+    // We no longer link directly to chemical_types; let backend treat this as null
     chemical_type_id: null,
+    // New pipelines must always start as Lead ID (matches backend PIPELINE_STAGES)
     stage: "Lead ID",
     amount: null,
     currency: null,
@@ -147,13 +158,20 @@ export function SalesPipelinePage() {
   // Ref to track if we've already processed edit params (prevent infinite loops)
   const editProcessedRef = useRef<string | null>(null);
 
+  // Grouped view: which customers (companies) are expanded
+  const [expandedCustomers, setExpandedCustomers] = useState<Set<string>>(new Set());
+
   // Load customers, Chemical Types, business models, and currencies for dropdowns
   useEffect(() => {
     async function loadDropdownData() {
       try {
-        const [customersRes, chemicalTypesRes, businessModelsRes, currenciesRes] = await Promise.all([
+        const [customersRes, chemicalTypesRes, chemicalFullDataRes, businessModelsRes, currenciesRes, vendorsRes, partnerChemicalsRes] = await Promise.all([
           api.get<CustomerListResponse>("/crm/customers", { params: { limit: 500 } }),
           fetchChemicalTypes({ limit: 500 }),
+          fetchChemicalFullData({ limit: 1000 }).catch((err) => {
+            console.warn("Failed to fetch chemical full data:", err);
+            return { chemicals: [], total: 0 };
+          }),
           fetchBusinessModels().catch((err) => {
             console.warn("Failed to fetch business models:", err);
             return [];
@@ -162,14 +180,26 @@ export function SalesPipelinePage() {
             console.warn("Failed to fetch currencies:", err);
             return ["ETB", "KES", "USD", "EUR"]; // Fallback
           }),
+          fetchVendors().catch((err) => {
+            console.warn("Failed to fetch vendors for pipeline:", err);
+            return [];
+          }),
+          fetchPartnerChemicals({ limit: 1000 }).catch((err) => {
+            console.warn("Failed to fetch partner chemicals:", err);
+            return { partner_chemicals: [], total: 0 };
+          }),
         ]);
         setCustomers(customersRes.data.customers);
         setChemicalTypes(chemicalTypesRes.chemicals);
+        setChemicalFullData(chemicalFullDataRes.chemicals || []);
         setBusinessModels(businessModelsRes || []);
         setCurrencies((currenciesRes as Currency[]) || (["ETB", "KES", "USD", "EUR"] as Currency[]));
+        setVendors(vendorsRes || []);
+        setPartnerChemicals(partnerChemicalsRes?.partner_chemicals || []);
         console.log("Loaded dropdown data:", {
           businessModels: businessModelsRes?.length || 0,
           currencies: currenciesRes?.length || 0,
+          chemicalFullData: chemicalFullDataRes.chemicals?.length || 0,
         });
       } catch (err) {
         console.error("Failed to load dropdown data:", err);
@@ -253,7 +283,6 @@ export function SalesPipelinePage() {
   function openCreateForm() {
     // Pre-fill from URL params if available
     const customerParam = searchParams.get("customer");
-    const chemicalTypeParam = searchParams.get("chemical_type");
     
     // CRITICAL: Explicitly clear editingPipeline FIRST to ensure we create a new record
     // This prevents any stale state from causing updates instead of creates
@@ -263,7 +292,9 @@ export function SalesPipelinePage() {
     const newFormData: SalesPipelineCreate = {
       customer_id: customerParam || "",
       tds_id: null,
-      chemical_type_id: chemicalTypeParam || null,
+      // Don't send any legacy chemical_type_id; keep it null
+      chemical_type_id: null,
+      // New pipelines must always start at Lead ID stage
       stage: "Lead ID",
       amount: null,
       currency: null,
@@ -516,18 +547,20 @@ export function SalesPipelinePage() {
         // CREATE MODE: Always create a new record
         console.log("CREATE MODE: Creating new pipeline record", {
           customer_id: formData.customer_id,
-          chemical_type_id: formData.chemical_type_id,
-          stage: formData.stage
+          // We no longer send a concrete chemical_type_id; let backend treat it as null
+          chemical_type_id: null,
+          stage: "Lead ID",
         });
         setCreating(true);
         // Explicitly clear editingPipeline before creating to prevent any confusion
         setEditingPipeline(null);
-        console.log("Creating pipeline with formData:", {
+        const createData: SalesPipelineCreate = {
           ...formData,
-          amount: formData.amount,
-          amountType: typeof formData.amount,
-        });
-        await createSalesPipeline(formData);
+          // chemical_type_id now stores the UUID from chemical_full_data.uuid_id
+          stage: "Lead ID",
+        };
+        console.log("Creating pipeline with payload:", createData);
+        await createSalesPipeline(createData);
       }
       closeForm();
       await loadPipelines();
@@ -623,10 +656,49 @@ export function SalesPipelinePage() {
     return customer?.customer_name || customerId;
   }
 
-  function getChemicalTypeName(chemicalTypeId: string | null | undefined): string {
-    if (!chemicalTypeId) return "—";
+  function getChemicalTypeName(pipeline: SalesPipeline): string {
+    const chemicalTypeId = pipeline.chemical_type_id;
+    
+    if (!chemicalTypeId) {
+      return "Unknown Product";
+    }
+    
+    // First, try to find by UUID (uuid_id matches chemical_type_id) - NEW WAY
+    const chemicalFullByUuid = chemicalFullData.find((c) => c.uuid_id === chemicalTypeId);
+    if (chemicalFullByUuid?.product_name) {
+      return chemicalFullByUuid.product_name;
+    }
+    
+    // Fallback: try to find by integer ID (if chemical_type_id is a number string)
+    const numericId = parseInt(String(chemicalTypeId), 10);
+    if (!isNaN(numericId) && numericId > 0) {
+      const chemicalFullById = chemicalFullData.find((c) => c.id === numericId);
+      if (chemicalFullById?.product_name) {
+        return chemicalFullById.product_name;
+      }
+    }
+    
+    // Fallback: try to find in old chemicalTypes (for backward compatibility)
     const chemicalType = chemicalTypes.find((ct) => ct.id === chemicalTypeId);
-    return chemicalType ? chemicalType.name : chemicalTypeId;
+    if (chemicalType?.name) {
+      return chemicalType.name;
+    }
+    
+    // Debug log if not found
+    console.error("❌ Product not found for pipeline:", {
+      pipelineId: pipeline.id,
+      chemical_type_id: chemicalTypeId,
+      chemical_type_id_type: typeof chemicalTypeId,
+      chemicalFullDataCount: chemicalFullData.length,
+      hasUuidIds: chemicalFullData.filter(c => c.uuid_id).length,
+      sampleProducts: chemicalFullData.slice(0, 3).map(c => ({ 
+        id: c.id, 
+        uuid_id: c.uuid_id, 
+        name: c.product_name 
+      })),
+    });
+    
+    return "Unknown Product";
   }
 
   const totalPages = Math.ceil(total / limit);
@@ -808,42 +880,34 @@ export function SalesPipelinePage() {
 
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">
-                    Chemical Type
+                    Product <span className="text-red-500">*</span>
                   </label>
                   <select
                     value={formData.chemical_type_id || ""}
-                    onChange={async (e) => {
-                      const chemicalTypeId = e.target.value || null;
+                    onChange={(e) => {
+                      const productUuidId = e.target.value || null;
                       setFormData({
                         ...formData,
-                        chemical_type_id: chemicalTypeId,
-                        tds_id: null, // Clear tds_id when chemical type changes
+                        chemical_type_id: productUuidId, // Store UUID in chemical_type_id field
+                        tds_id: null, // Clear tds_id when product changes
                       });
-                      
-                      // Load TDS for selected chemical type
-                      if (chemicalTypeId) {
-                        try {
-                          const tdsRes = await fetchTDS({ 
-                            chemical_type_id: chemicalTypeId,
-                            limit: 1000 
-                          });
-                          setTdsList(tdsRes.tds || []);
-                        } catch (err) {
-                          console.error("Failed to load TDS:", err);
-                          setTdsList([]);
-                        }
-                      } else {
-                        setTdsList([]);
-                      }
+                      setTdsList([]); // Clear TDS list
                     }}
+                    required
                     className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                   >
-                    <option value="">Select chemical type...</option>
-                    {chemicalTypes.map((ct) => (
-                      <option key={ct.id} value={ct.id}>
-                        {ct.name}
-                      </option>
-                    ))}
+                    <option value="">Select product...</option>
+                    {chemicalFullData
+                      .filter((c) => c.product_name) // Show all products with names
+                      .sort((a, b) => (a.product_name || "").localeCompare(b.product_name || ""))
+                      .map((c) => (
+                        <option key={c.uuid_id || c.id} value={c.uuid_id || c.id.toString()}>
+                          {c.product_name}
+                          {c.vendor ? ` (${c.vendor})` : ""}
+                          {c.product_category ? ` - ${c.product_category}` : ""}
+                          {!c.uuid_id && " ⚠️ (No UUID)"}
+                        </option>
+                      ))}
                   </select>
                 </div>
 
@@ -862,7 +926,12 @@ export function SalesPipelinePage() {
                     required
                     className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                   >
-                    {PIPELINE_STAGES.map((stage) => (
+                    {/* When creating a new pipeline, only 'Lead' stage is allowed */}
+                    {!editingPipeline && (
+                      <option value="Lead">Lead</option>
+                    )}
+                    {/* When editing, allow full stage selection */}
+                    {editingPipeline && PIPELINE_STAGES.map((stage) => (
                       <option key={stage} value={stage}>
                         {stage}
                       </option>
@@ -902,31 +971,84 @@ export function SalesPipelinePage() {
                   />
                 </div>
 
-                {formData.chemical_type_id && (
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">
-                      Brand (TDS)
-                    </label>
-                    <select
-                      value={formData.tds_id || ""}
-                      onChange={(e) =>
-                        setFormData({
-                          ...formData,
-                          tds_id: e.target.value || null,
-                        })
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                    Vendor
+                  </label>
+                  <select
+                    value={formData.vendor_name || ""}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        vendor_name: e.target.value || null,
+                        metadata: {
+                          ...(formData.metadata || {}),
+                          vendor: e.target.value || null,
+                        },
+                      })
+                    }
+                    disabled={!formData.chemical_type_id}
+                    className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                  >
+                    <option value="">
+                      {!formData.chemical_type_id
+                        ? "Select product first..."
+                        : "Select vendor..."}
+                    </option>
+                    {(() => {
+                      // Filter vendors based on selected product
+                      if (!formData.chemical_type_id) {
+                        return [];
                       }
-                      className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                    >
-                      <option value="">Select brand...</option>
-                      {tdsList.map((tds) => (
-                        <option key={tds.id} value={tds.id}>
-                          {tds.brand || "Unnamed Brand"}
-                          {tds.grade ? ` - ${tds.grade}` : ""}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
+
+                      // Get the selected product
+                      const selectedProduct = chemicalFullData.find(
+                        (c) => c.uuid_id === formData.chemical_type_id || c.id.toString() === formData.chemical_type_id
+                      );
+
+                      if (!selectedProduct) {
+                        return [];
+                      }
+
+                      // Get vendors from partner_chemicals that match the product's vendor or partner_id
+                      const availableVendors = new Set<string>();
+
+                      // Add vendor from the selected product if it exists
+                      if (selectedProduct.vendor) {
+                        availableVendors.add(selectedProduct.vendor);
+                      }
+
+                      // Add vendors from partner_chemicals that match the product's partner_id
+                      if (selectedProduct.partner_id) {
+                        const matchingPartner = partnerChemicals.find(
+                          (pc) => pc.id === selectedProduct.partner_id
+                        );
+                        if (matchingPartner?.vendor) {
+                          availableVendors.add(matchingPartner.vendor);
+                        }
+                      }
+
+                      // Also add vendors from partner_chemicals that have the same vendor name as the product
+                      partnerChemicals.forEach((pc) => {
+                        if (pc.vendor && selectedProduct.vendor && 
+                            pc.vendor.toLowerCase() === selectedProduct.vendor.toLowerCase()) {
+                          availableVendors.add(pc.vendor);
+                        }
+                      });
+
+                      return Array.from(availableVendors).sort();
+                    })().map((v) => (
+                      <option key={v} value={v}>
+                        {v}
+                      </option>
+                    ))}
+                  </select>
+                  {formData.chemical_type_id && (
+                    <p className="text-xs text-slate-500 mt-1">
+                      Vendors filtered for selected product
+                    </p>
+                  )}
+                </div>
 
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">
@@ -1236,120 +1358,181 @@ export function SalesPipelinePage() {
             </div>
           ) : (
             <>
-              <div className="p-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {pipelines.map((pipeline) => (
+              <div className="p-6 space-y-4">
+                {Object.entries(
+                  pipelines.reduce<Record<string, SalesPipeline[]>>((acc, pipeline) => {
+                    const key = pipeline.customer_id || "unknown";
+                    if (!acc[key]) acc[key] = [];
+                    acc[key].push(pipeline);
+                    return acc;
+                  }, {})
+                ).map(([customerId, customerPipelines]) => {
+                  const isExpanded = expandedCustomers.has(customerId);
+                  const customerName = getCustomerName(customerId);
+                  return (
                     <div
-                      key={pipeline.id}
-                      className="bg-white rounded-xl border-2 border-slate-200 hover:border-emerald-400 hover:shadow-lg transition-all cursor-pointer p-6 space-y-4"
-                      onClick={() => handlePipelineClick(pipeline.id)}
+                      key={customerId}
+                      className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"
                     >
-                      {/* Header */}
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-2">
-                            <User className="w-4 h-4 text-slate-400" />
-                            <h3 className="text-lg font-bold text-slate-900">
-                              {getCustomerName(pipeline.customer_id)}
-                            </h3>
+                      {/* Folder header for company */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = new Set(expandedCustomers);
+                          if (next.has(customerId)) {
+                            next.delete(customerId);
+                          } else {
+                            next.add(customerId);
+                          }
+                          setExpandedCustomers(next);
+                        }}
+                        className="w-full flex items-center justify-between px-4 sm:px-6 py-3 sm:py-4 bg-slate-50 hover:bg-slate-100 transition-colors"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="flex items-center justify-center w-9 h-9 rounded-xl bg-emerald-100 text-emerald-700">
+                            <Folder className="w-5 h-5" />
                           </div>
-                          <div className="flex items-center gap-2">
-                            <Package className="w-4 h-4 text-slate-400" />
-                            <span className="text-sm text-slate-600">
-                              {getChemicalTypeName(pipeline.chemical_type_id || pipeline.tds_id)}
-                            </span>
+                          <div className="text-left">
+                            <p className="text-sm font-semibold text-slate-900">
+                              {customerName || "Unknown Customer"}
+                            </p>
+                            <p className="text-xs text-slate-500">
+                              {customerPipelines.length} pipeline
+                              {customerPipelines.length !== 1 ? "s" : ""} for this company
+                            </p>
                           </div>
                         </div>
-                        <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleOpenQuotationForm(pipeline.id);
-                            }}
-                            className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
-                            title="Create Quotation"
-                          >
-                            <FileText className="w-4 h-4" />
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              navigate(`/sales/pipeline/${pipeline.id}/edit`);
-                            }}
-                            className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                            title="Edit"
-                          >
-                            <Edit2 className="w-4 h-4" />
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDelete(pipeline.id);
-                            }}
-                            disabled={deleting === pipeline.id}
-                            className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
-                            title="Delete"
-                          >
-                            {deleting === pipeline.id ? (
-                              <Loader2 className="w-4 h-4 animate-spin" />
-                            ) : (
-                              <Trash2 className="w-4 h-4" />
-                            )}
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Stage Badge */}
-                      <div>
-                        <span
-                          className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold border ${
-                            STAGE_COLORS[pipeline.stage]
+                        <ChevronDown
+                          className={`w-5 h-5 text-slate-500 transition-transform ${
+                            isExpanded ? "rotate-180" : ""
                           }`}
-                        >
-                          {pipeline.stage}
-                        </span>
-                      </div>
+                        />
+                      </button>
 
-                      {/* Amount */}
-                      <div className="flex items-center gap-2">
-                        <DollarSign className="w-5 h-5 text-emerald-600" />
-                        <div>
-                          <p className="text-xs text-slate-500">Amount</p>
-                          <p className="text-lg font-bold text-slate-900">
-                            {pipeline.amount 
-                              ? `${pipeline.amount.toLocaleString()} ${pipeline.currency || "USD"}`
-                              : "—"}
-                          </p>
+                      {/* Folder contents: pipeline cards for this company */}
+                      {isExpanded && (
+                        <div className="px-4 sm:px-6 pb-4 sm:pb-6 pt-3">
+                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+                            {customerPipelines.map((pipeline) => (
+                              <div
+                                key={pipeline.id}
+                                className="bg-white rounded-xl border-2 border-slate-200 hover:border-emerald-400 hover:shadow-lg transition-all cursor-pointer p-5 space-y-4"
+                                onClick={() => handlePipelineClick(pipeline.id)}
+                              >
+                                {/* Header */}
+                                <div className="flex items-start justify-between">
+                                  <div className="flex-1">
+                                    <div className="flex items-center gap-2 mb-2">
+                                      <Package className="w-4 h-4 text-slate-400" />
+                                      <span className="text-sm font-semibold text-slate-800">
+                                        {getChemicalTypeName(pipeline)}
+                                      </span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      <User className="w-3 h-3 text-slate-400" />
+                                      <span className="text-xs text-slate-500">
+                                        {customerName || "Unknown Customer"}
+                                      </span>
+                                    </div>
+                                  </div>
+                                  <div
+                                    className="flex items-center gap-1.5"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleOpenQuotationForm(pipeline.id);
+                                      }}
+                                      className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                                      title="Create Quotation"
+                                    >
+                                      <FileText className="w-4 h-4" />
+                                    </button>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        navigate(`/sales/pipeline/${pipeline.id}/edit`);
+                                      }}
+                                      className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                      title="Edit"
+                                    >
+                                      <Edit2 className="w-4 h-4" />
+                                    </button>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleDelete(pipeline.id);
+                                      }}
+                                      disabled={deleting === pipeline.id}
+                                      className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
+                                      title="Delete"
+                                    >
+                                      {deleting === pipeline.id ? (
+                                        <Loader2 className="w-4 h-4 animate-spin" />
+                                      ) : (
+                                        <Trash2 className="w-4 h-4" />
+                                      )}
+                                    </button>
+                                  </div>
+                                </div>
+
+                                {/* Stage */}
+                                <div>
+                                  <span
+                                    className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold border ${
+                                      STAGE_COLORS[pipeline.stage]
+                                    }`}
+                                  >
+                                    {pipeline.stage}
+                                  </span>
+                                </div>
+
+                                {/* Amount */}
+                                <div className="flex items-center gap-2">
+                                  <DollarSign className="w-5 h-5 text-emerald-600" />
+                                  <div>
+                                    <p className="text-xs text-slate-500">Amount</p>
+                                    <p className="text-lg font-bold text-slate-900">
+                                      {pipeline.amount
+                                        ? `${pipeline.amount.toLocaleString()} ${pipeline.currency || "USD"}`
+                                        : "—"}
+                                    </p>
+                                  </div>
+                                </div>
+
+                                {/* Expected Close Date */}
+                                <div className="flex items-center gap-2">
+                                  <Calendar className="w-5 h-5 text-blue-600" />
+                                  <div>
+                                    <p className="text-xs text-slate-500">Expected Close</p>
+                                    <p className="text-sm font-semibold text-slate-900">
+                                      {formatDate(pipeline.expected_close_date || null)}
+                                    </p>
+                                  </div>
+                                </div>
+
+                                {/* Footer */}
+                                <div className="pt-4 border-t border-slate-200">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handlePipelineClick(pipeline.id);
+                                    }}
+                                    className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-semibold hover:shadow-lg transition-all"
+                                  >
+                                    View Details
+                                    <ChevronRight className="w-4 h-4" />
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
                         </div>
-                      </div>
-
-                      {/* Expected Close Date */}
-                      <div className="flex items-center gap-2">
-                        <Calendar className="w-5 h-5 text-blue-600" />
-                        <div>
-                          <p className="text-xs text-slate-500">Expected Close</p>
-                          <p className="text-sm font-semibold text-slate-900">
-                            {formatDate(pipeline.expected_close_date || null)}
-                          </p>
-                        </div>
-                      </div>
-
-                      {/* Footer */}
-                      <div className="pt-4 border-t border-slate-200">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handlePipelineClick(pipeline.id);
-                          }}
-                          className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-semibold hover:shadow-lg transition-all"
-                        >
-                          View Details
-                          <ChevronRight className="w-4 h-4" />
-                        </button>
-                      </div>
+                      )}
                     </div>
-                  ))}
-                </div>
+                  );
+                })}
               </div>
 
               {/* Pagination */}
@@ -1385,12 +1568,45 @@ export function SalesPipelinePage() {
       </main>
 
       {/* Quotation Form Modal */}
-      {showQuotationForm && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-y-auto">
-          <div className="bg-white rounded-xl shadow-xl max-w-6xl w-full my-8">
+      {showQuotationForm && quotationPipelineId && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 p-4 overflow-y-auto">
+          <div className="mx-auto bg-white rounded-xl shadow-xl max-w-6xl w-full my-8 max-h-[calc(100vh-4rem)] overflow-y-auto">
             <QuotationForm
-              pipelineId={quotationPipelineId || undefined}
+              pipelineId={quotationPipelineId}
               customerId={pipelines.find((p) => p.id === quotationPipelineId)?.customer_id}
+              pipelineData={(() => {
+                const pipeline = pipelines.find((p) => p.id === quotationPipelineId);
+                if (!pipeline) return null;
+                
+                // Get product name from chemical_full_data
+                const productName = getChemicalTypeName(pipeline);
+                
+                // Get vendor from metadata or from chemical_full_data
+                let vendorName = (pipeline.metadata as any)?.vendor_name || null;
+                if (!vendorName && pipeline.chemical_type_id) {
+                  // Try to get vendor from chemical_full_data
+                  const chemicalFullByUuid = chemicalFullData.find((c) => c.uuid_id === pipeline.chemical_type_id);
+                  if (chemicalFullByUuid?.vendor) {
+                    vendorName = chemicalFullByUuid.vendor;
+                  } else {
+                    const numericId = parseInt(String(pipeline.chemical_type_id), 10);
+                    if (!isNaN(numericId) && numericId > 0) {
+                      const chemicalFullById = chemicalFullData.find((c) => c.id === numericId);
+                      if (chemicalFullById?.vendor) {
+                        vendorName = chemicalFullById.vendor;
+                      }
+                    }
+                  }
+                }
+                
+                return {
+                  product_name: productName !== "Unknown Product" ? productName : null,
+                  chemical_type_id: pipeline.chemical_type_id || null,
+                  vendor_name: vendorName,
+                  unit_price: pipeline.unit_price || null,
+                  unit: pipeline.unit || null,
+                };
+              })()}
               onSave={handleSaveQuotation}
               onCancel={handleCloseQuotationForm}
               initialData={

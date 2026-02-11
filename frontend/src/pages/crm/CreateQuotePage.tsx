@@ -45,21 +45,14 @@ export function CreateQuotePage() {
   const [customerSearchResults, setCustomerSearchResults] = useState<Customer[]>([]);
   const [customerSearchLoading, setCustomerSearchLoading] = useState(false);
   const [reference, setReference] = useState("");
-  const [validity, setValidity] = useState("30 days from issue");
-  const [paymentTerms, setPaymentTerms] = useState("Net 30 days");
-  const [deliveryTerms, setDeliveryTerms] = useState("Delivered to customer");
-  const [incoterms, setIncoterms] = useState("CIF Djibouti");
+  // Start empty; let the user fill these explicitly per quote
+  const [validity, setValidity] = useState("");
+  const [paymentTerms, setPaymentTerms] = useState("");
+  const [deliveryTerms, setDeliveryTerms] = useState("");
+  const [incoterms, setIncoterms] = useState("");
   const [notes, setNotes] = useState("");
-  const [productLines, setProductLines] = useState<ProductLine[]>([
-    {
-      id: crypto.randomUUID(),
-      chemicalTypeId: "",
-      quantity: "",
-      unit: "MT",
-      targetPrice: "",
-      notes: "",
-    },
-  ]);
+  // Start empty; user adds the first product when ready
+  const [productLines, setProductLines] = useState<ProductLine[]>([]);
 
   useEffect(() => {
     async function loadChemicals() {
@@ -145,7 +138,7 @@ export function CreateQuotePage() {
   }
 
   function removeLine(id: string) {
-    setProductLines((prev) => (prev.length > 1 ? prev.filter((l) => l.id !== id) : prev));
+    setProductLines((prev) => prev.filter((l) => l.id !== id));
   }
 
   function handleGenerateDraft() {
@@ -443,6 +436,15 @@ Notes: ${notes || "N/A"}`;
             </button>
           </div>
 
+          {productLines.length === 0 && (
+            <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-5 py-6">
+              <p className="text-sm font-semibold text-slate-900">Start with an empty quote</p>
+              <p className="mt-1 text-xs text-slate-600">
+                Click <span className="font-semibold">Add product</span> to add the first line item.
+              </p>
+            </div>
+          )}
+
           <div className="grid gap-3">
             {productLines.map((line, idx) => (
               <div
@@ -519,15 +521,13 @@ Notes: ${notes || "N/A"}`;
                       placeholder="Packing, delivery, tech notes..."
                       className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/70 focus:border-blue-500/70"
                     />
-                    {productLines.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => removeLine(line.id)}
-                        className="self-start text-xs text-rose-500 hover:text-rose-600"
-                      >
-                        Remove
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => removeLine(line.id)}
+                      className="self-start text-xs text-rose-500 hover:text-rose-600"
+                    >
+                      Remove
+                    </button>
                   </div>
                 </div>
               </div>

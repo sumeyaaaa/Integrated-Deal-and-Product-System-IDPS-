@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { fetchTDS, Tds, fetchChemicalTypes, ChemicalType, fetchCustomers, Customer } from "../services/api";
+import { fetchTDS, Tds, fetchChemicalTypes, ChemicalType, fetchCustomers, Customer, fetchPartnerChemicals, PartnerChemical } from "../services/api";
 import { X, Plus, Trash2, FileText, Download, Eye } from "lucide-react";
 
 export interface QuotationProduct {
@@ -7,7 +7,7 @@ export interface QuotationProduct {
   chemical_type_id: string | null;
   product_name: string; // Chemical type name
   tds_id: string | null;
-  brand_name: string; // Brand name from TDS
+  vendor_name: string; // Vendor name (changed from brand_name)
   unit_price: number | null;
   quantity: number | null;
   amount: number; // Calculated: unit_price * quantity
@@ -25,6 +25,13 @@ export interface QuotationFormData {
 interface QuotationFormProps {
   pipelineId?: string;
   customerId?: string;
+  pipelineData?: {
+    product_name?: string | null;
+    chemical_type_id?: string | null;
+    vendor_name?: string | null;
+    unit_price?: number | null;
+    unit?: string | null;
+  } | null;
   onSave?: (data: QuotationFormData) => void;
   onCancel?: () => void;
   initialData?: QuotationFormData;
@@ -59,27 +66,18 @@ const PAYMENT_TERMS_OPTIONS = [
   },
 ];
 
-export function QuotationForm({ pipelineId, customerId, onSave, onCancel, initialData, defaultFormType = "Baracoda" }: QuotationFormProps) {
+export function QuotationForm({ pipelineId, customerId, pipelineData, onSave, onCancel, initialData, defaultFormType = "Baracoda" }: QuotationFormProps) {
   const [formType, setFormType] = useState<QuotationFormType>(initialData?.form_type || defaultFormType);
   const [chemicalTypes, setChemicalTypes] = useState<ChemicalType[]>([]);
   const [tdsList, setTdsList] = useState<Tds[]>([]);
+  const [partnerChemicals, setPartnerChemicals] = useState<PartnerChemical[]>([]);
   const [loadingTds, setLoadingTds] = useState(false);
   const [loadingChemicalTypes, setLoadingChemicalTypes] = useState(false);
+  const [loadingPartnerChemicals, setLoadingPartnerChemicals] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
   const [companyName, setCompanyName] = useState<string>("");
   const [products, setProducts] = useState<QuotationProduct[]>(
-    initialData?.products || [
-      {
-        id: "1",
-        chemical_type_id: null,
-        product_name: "",
-        tds_id: null,
-        brand_name: "",
-        unit_price: null,
-        quantity: null,
-        amount: 0,
-      },
-    ]
+    initialData?.products || []
   );
   const [paymentTerms, setPaymentTerms] = useState<string>(initialData?.payment_terms || "");
 
@@ -97,6 +95,22 @@ export function QuotationForm({ pipelineId, customerId, onSave, onCancel, initia
       }
     }
     loadChemicalTypes();
+  }, []);
+
+  // Load Partner Chemicals (for vendor list)
+  useEffect(() => {
+    async function loadPartnerChemicals() {
+      try {
+        setLoadingPartnerChemicals(true);
+        const res = await fetchPartnerChemicals({ limit: 1000 });
+        setPartnerChemicals(res.partner_chemicals || []);
+      } catch (err) {
+        console.error("Failed to load partner chemicals:", err);
+      } finally {
+        setLoadingPartnerChemicals(false);
+      }
+    }
+    loadPartnerChemicals();
   }, []);
 
   // Load customer name if customerId is provided
@@ -117,6 +131,47 @@ export function QuotationForm({ pipelineId, customerId, onSave, onCancel, initia
     loadCustomerName();
   }, [customerId]);
 
+  // Auto-fill form from pipeline data when pipelineData is provided
+  useEffect(() => {
+    if (pipelineData && products.length === 0 && !initialData && chemicalTypes.length > 0) {
+      const productName = pipelineData.product_name || "";
+      const chemicalTypeId = pipelineData.chemical_type_id || null;
+      const vendorName = pipelineData.vendor_name || "";
+      const unitPrice = pipelineData.unit_price || null;
+      const quantity = pipelineData.unit ? parseFloat(pipelineData.unit) : null;
+
+      // Find matching chemical type
+      const matchingChemicalType = chemicalTypes.find(
+        (ct) => ct.id === chemicalTypeId || ct.name === productName
+      );
+
+      // Find vendor from partner_chemicals
+      let finalVendorName = vendorName;
+      if (vendorName && partnerChemicals.length > 0) {
+        const matchingVendor = partnerChemicals.find(
+          (pc) => pc.vendor?.toLowerCase() === vendorName.toLowerCase()
+        );
+        if (matchingVendor) {
+          finalVendorName = matchingVendor.vendor;
+        }
+      }
+
+      if (matchingChemicalType || productName) {
+        const newProduct: QuotationProduct = {
+          id: Date.now().toString(),
+          chemical_type_id: matchingChemicalType?.id || chemicalTypeId,
+          product_name: matchingChemicalType?.name || productName,
+          tds_id: null,
+          vendor_name: finalVendorName, // Auto-filled from pipeline
+          unit_price: unitPrice, // Auto-filled from pipeline
+          quantity: quantity, // Auto-filled from pipeline
+          amount: unitPrice && quantity ? unitPrice * quantity : 0, // Auto-calculated
+        };
+        setProducts([newProduct]);
+      }
+    }
+  }, [pipelineData, chemicalTypes, partnerChemicals, products.length, initialData]);
+
   // Load TDS data when chemical type is selected
   async function loadTDSForChemicalType(chemicalTypeId: string) {
     try {
@@ -131,10 +186,15 @@ export function QuotationForm({ pipelineId, customerId, onSave, onCancel, initia
     }
   }
 
-  // Get available brands for a selected chemical type
-  function getBrandsForChemicalType(chemicalTypeId: string | null): Tds[] {
-    if (!chemicalTypeId) return [];
-    return tdsList.filter((tds) => tds.chemical_type_id === chemicalTypeId);
+  // Get available vendors from partner_chemicals
+  function getAvailableVendors(): string[] {
+    const vendorSet = new Set<string>();
+    partnerChemicals.forEach((pc) => {
+      if (pc.vendor) {
+        vendorSet.add(pc.vendor);
+      }
+    });
+    return Array.from(vendorSet).sort();
   }
 
   // Add new product row
@@ -147,7 +207,7 @@ export function QuotationForm({ pipelineId, customerId, onSave, onCancel, initia
         chemical_type_id: null,
         product_name: "",
         tds_id: null,
-        brand_name: "",
+        vendor_name: "",
         unit_price: null,
         quantity: null,
         amount: 0,
@@ -157,9 +217,7 @@ export function QuotationForm({ pipelineId, customerId, onSave, onCancel, initia
 
   // Remove product row
   function handleRemoveProduct(productId: string) {
-    if (products.length > 1) {
-      setProducts(products.filter((p) => p.id !== productId));
-    }
+    setProducts(products.filter((p) => p.id !== productId));
   }
 
   // Update product chemical type selection
@@ -177,26 +235,22 @@ export function QuotationForm({ pipelineId, customerId, onSave, onCancel, initia
               ...p,
               chemical_type_id: chemicalTypeId,
               product_name: productName,
-              tds_id: null, // Reset brand selection
-              brand_name: "",
+              tds_id: null, // Reset vendor selection
+              vendor_name: "",
             }
           : p
       )
     );
   }
 
-  // Update product brand (TDS) selection
-  function handleProductBrandChange(productId: string, tdsId: string) {
-    const tds = tdsList.find((t) => t.id === tdsId);
-    const brandName = tds?.brand || "";
-
+  // Update vendor name from partner_chemicals dropdown
+  function handleVendorChange(productId: string, vendorName: string) {
     setProducts(
       products.map((p) =>
         p.id === productId
           ? {
               ...p,
-              tds_id: tdsId,
-              brand_name: brandName,
+              vendor_name: vendorName,
             }
           : p
       )
@@ -246,12 +300,16 @@ export function QuotationForm({ pipelineId, customerId, onSave, onCancel, initia
 
   // Handle save
   function handleSave() {
+    if (products.length === 0) {
+      alert("Please add at least one product");
+      return;
+    }
     if (products.some((p) => !p.chemical_type_id || !p.product_name)) {
       alert("Please select a product name for all rows");
       return;
     }
-    if (products.some((p) => !p.tds_id || !p.brand_name)) {
-      alert("Please select a brand for all products");
+    if (products.some((p) => !p.vendor_name)) {
+      alert("Please enter a vendor name for all products");
       return;
     }
     if (products.some((p) => p.unit_price === null || p.quantity === null)) {
@@ -282,21 +340,33 @@ export function QuotationForm({ pipelineId, customerId, onSave, onCancel, initia
       return;
     }
 
+    // Validate products before export
+    const validProducts = products.filter((p) => p.product_name && p.vendor_name && p.unit_price && p.quantity);
+    if (validProducts.length === 0) {
+      alert("Please ensure all products have product name, vendor, unit price, and quantity");
+      return;
+    }
+
+    if (!paymentTerms) {
+      alert("Please select payment terms before exporting");
+      return;
+    }
+
     try {
       // Prepare request data
       const quotationData = {
         form_type: formType,
-        products: products
-          .filter((p) => p.product_name && p.brand_name && p.unit_price && p.quantity)
-          .map((p) => ({
-            product_name: p.product_name,
-            brand_name: p.brand_name,
-            unit_price: p.unit_price || 0,
-            quantity: p.quantity || 0,
-          })),
+        products: validProducts.map((p) => ({
+          product_name: p.product_name,
+          vendor_name: p.vendor_name,
+          unit_price: p.unit_price || 0,
+          quantity: p.quantity || 0,
+        })),
         payment_option: paymentTerms ? parseInt(paymentTerms.replace("option", "")) : 1,
         company_name: companyName || undefined,
       };
+
+      console.log("Exporting quotation with data:", quotationData);
 
       // Call backend API
       const apiBaseUrl = import.meta.env.VITE_API_URL || "http://localhost:8000/api/v1";
@@ -309,38 +379,56 @@ export function QuotationForm({ pipelineId, customerId, onSave, onCancel, initia
       });
 
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.detail || "Failed to generate quotation");
+        let errorMessage = "Failed to generate quotation";
+        try {
+          const error = await response.json();
+          errorMessage = error.detail || error.message || errorMessage;
+        } catch (e) {
+          errorMessage = `Server error: ${response.status} ${response.statusText}`;
+        }
+        console.error("Quotation generation failed:", errorMessage);
+        throw new Error(errorMessage);
       }
 
       // Get filename from response headers or generate one
       const contentDisposition = response.headers.get("content-disposition");
       let filename = `Quotation_${formType}_${new Date().toISOString().split("T")[0]}.xlsx`;
       if (contentDisposition) {
-        const filenameMatch = contentDisposition.match(/filename="?(.+)"?/);
-        if (filenameMatch) {
-          filename = filenameMatch[1];
+        const filenameMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+        if (filenameMatch && filenameMatch[1]) {
+          filename = filenameMatch[1].replace(/['"]/g, "");
         }
       }
 
       // Download the file
       const blob = await response.blob();
+      
+      if (blob.size === 0) {
+        throw new Error("Generated file is empty");
+      }
+
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
       a.download = filename;
       document.body.appendChild(a);
       a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
+      
+      // Cleanup
+      setTimeout(() => {
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+      }, 100);
+
+      console.log("Quotation downloaded successfully:", filename);
     } catch (err: any) {
       console.error("Error exporting to Excel:", err);
-      alert(err.message || "Failed to export quotation. Please try again.");
+      alert(err.message || "Failed to export quotation. Please check the console for details and try again.");
     }
   }
 
   return (
-    <div className="bg-gradient-to-br from-slate-50 to-white min-h-screen p-4 md:p-6">
+    <div className="bg-gradient-to-br from-slate-50 to-white w-full p-4 md:p-6">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="bg-white rounded-2xl shadow-lg border border-slate-200 mb-6">
@@ -409,9 +497,18 @@ export function QuotationForm({ pipelineId, customerId, onSave, onCancel, initia
 
           {/* Products List - Better Layout */}
           <div className="p-6">
+            {products.length === 0 ? (
+              <div className="rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 p-8 text-center">
+                <p className="text-sm font-semibold text-slate-900">Start with an empty quotation</p>
+                <p className="mt-1 text-sm text-slate-600">
+                  Click <span className="font-medium">Add Product</span> to begin.
+                </p>
+              </div>
+            ) : null}
+
             <div className="space-y-4">
               {products.map((product, index) => {
-                const availableBrands = getBrandsForChemicalType(product.chemical_type_id);
+                const availableVendors = getAvailableVendors();
                 return (
                   <div
                     key={product.id}
@@ -424,15 +521,13 @@ export function QuotationForm({ pipelineId, customerId, onSave, onCancel, initia
                         </div>
                         <h4 className="font-semibold text-slate-900">Product #{index + 1}</h4>
                       </div>
-                      {products.length > 1 && (
-                        <button
-                          onClick={() => handleRemoveProduct(product.id)}
-                          className="p-2 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors"
-                          title="Remove product"
-                        >
-                          <Trash2 className="w-5 h-5" />
-                        </button>
-                      )}
+                      <button
+                        onClick={() => handleRemoveProduct(product.id)}
+                        className="p-2 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors"
+                        title="Remove product"
+                      >
+                        <Trash2 className="w-5 h-5" />
+                      </button>
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
@@ -456,30 +551,36 @@ export function QuotationForm({ pipelineId, customerId, onSave, onCancel, initia
                         </select>
                       </div>
 
-                      {/* Brand */}
+                      {/* Vendor - Auto-filled from pipeline, editable from partner_chemicals */}
                       <div>
                         <label className="block text-sm font-medium text-slate-700 mb-2">
-                          Brand <span className="text-red-500">*</span>
+                          Vendor <span className="text-red-500">*</span>
                         </label>
                         <select
-                          value={product.tds_id || ""}
-                          onChange={(e) => handleProductBrandChange(product.id, e.target.value)}
+                          value={product.vendor_name || ""}
+                          onChange={(e) => handleVendorChange(product.id, e.target.value)}
                           className="w-full rounded-lg border-2 border-slate-300 bg-white px-4 py-2.5 text-slate-900 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 transition-all disabled:bg-slate-100 disabled:cursor-not-allowed"
-                          disabled={loadingTds || availableBrands.length === 0 || !product.chemical_type_id}
+                          disabled={loadingPartnerChemicals}
+                          required
                         >
                           <option value="">
-                            {!product.chemical_type_id
-                              ? "Select product name first..."
-                              : availableBrands.length === 0
-                              ? "No brands available"
-                              : "Select Brand..."}
+                            {loadingPartnerChemicals
+                              ? "Loading vendors..."
+                              : availableVendors.length === 0
+                              ? "No vendors available"
+                              : "Select Vendor..."}
                           </option>
-                          {availableBrands.map((tds) => (
-                            <option key={tds.id} value={tds.id}>
-                              {tds.brand || "No Brand"}
+                          {availableVendors.map((vendor) => (
+                            <option key={vendor} value={vendor}>
+                              {vendor}
                             </option>
                           ))}
                         </select>
+                        {product.vendor_name && (
+                          <p className="text-xs text-slate-500 mt-1">
+                            Auto-filled from pipeline • Editable
+                          </p>
+                        )}
                       </div>
                     </div>
 
@@ -628,7 +729,7 @@ export function QuotationForm({ pipelineId, customerId, onSave, onCancel, initia
                   <thead className="bg-gradient-to-r from-slate-100 to-slate-50">
                     <tr>
                       <th className="px-4 py-3 text-left text-xs font-semibold text-slate-700 uppercase">Product Name</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-slate-700 uppercase">Brand</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-slate-700 uppercase">Vendor</th>
                       <th className="px-4 py-3 text-right text-xs font-semibold text-slate-700 uppercase">Unit Price</th>
                       <th className="px-4 py-3 text-right text-xs font-semibold text-slate-700 uppercase">Quantity</th>
                       <th className="px-4 py-3 text-right text-xs font-semibold text-slate-700 uppercase">Amount</th>
@@ -636,11 +737,11 @@ export function QuotationForm({ pipelineId, customerId, onSave, onCancel, initia
                   </thead>
                   <tbody className="bg-white divide-y divide-slate-200">
                     {products
-                      .filter((p) => p.product_name && p.brand_name)
+                      .filter((p) => p.product_name && p.vendor_name)
                       .map((product) => (
                         <tr key={product.id} className="hover:bg-slate-50">
                           <td className="px-4 py-3 text-sm text-slate-900">{product.product_name}</td>
-                          <td className="px-4 py-3 text-sm text-slate-900">{product.brand_name}</td>
+                          <td className="px-4 py-3 text-sm text-slate-900">{product.vendor_name}</td>
                           <td className="px-4 py-3 text-sm text-slate-900 text-right">${product.unit_price?.toFixed(2) || "0.00"}</td>
                           <td className="px-4 py-3 text-sm text-slate-900 text-right">{product.quantity || "0"}</td>
                           <td className="px-4 py-3 text-sm font-semibold text-slate-900 text-right">${product.amount.toFixed(2)}</td>

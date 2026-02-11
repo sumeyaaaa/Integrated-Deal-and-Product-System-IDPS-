@@ -322,45 +322,15 @@ export async function deletePricing(partnerId: string, tdsId: string) {
   await api.delete(`/pms/pricing/${partnerId}/${tdsId}`);
 }
 
-// Partner Chemicals
+// Partner Chemicals (simplified schema: vendor, country, metadata)
 export interface PartnerChemical {
   id: string;
   vendor: string;
-  product_category: string;
-  sub_category?: string | null;
-  product_name: string;
-  brand?: string | null;
-  packing: string;
-  price?: number | null;
-  competitive_price?: number | null;
-  cost?: number | null;
-  tds_id?: string | null;
+  country?: string | null;
   metadata?: Record<string, any> | null;
   created_at?: string | null;
   updated_at?: string | null;
-}
-
-export interface PartnerChemicalListResponse {
-  partner_chemicals: PartnerChemical[];
-  total: number;
-}
-
-export interface PartnerChemicalCreate {
-  vendor: string;
-  product_category: string;
-  sub_category?: string | null;
-  product_name: string;
-  brand?: string | null;
-  packing: string;
-  price?: number | null;
-  competitive_price?: number | null;
-  cost?: number | null;
-  tds_id?: string | null;
-  metadata?: Record<string, any> | null;
-}
-
-export interface PartnerChemicalUpdate {
-  vendor?: string | null;
+  // Legacy fields for backward compatibility
   product_category?: string | null;
   sub_category?: string | null;
   product_name?: string | null;
@@ -370,6 +340,22 @@ export interface PartnerChemicalUpdate {
   competitive_price?: number | null;
   cost?: number | null;
   tds_id?: string | null;
+}
+
+export interface PartnerChemicalListResponse {
+  partner_chemicals: PartnerChemical[];
+  total: number;
+}
+
+export interface PartnerChemicalCreate {
+  vendor: string;
+  country?: string | null;
+  metadata?: Record<string, any> | null;
+}
+
+export interface PartnerChemicalUpdate {
+  vendor?: string | null;
+  country?: string | null;
   metadata?: Record<string, any> | null;
 }
 
@@ -415,6 +401,99 @@ export async function fetchProductCategories() {
 
 export async function fetchSubCategories() {
   const res = await api.get<string[]>("/pms/partner-chemicals/sub-categories");
+  return res.data;
+}
+
+// Chemical Full Data
+export interface ChemicalFullData {
+  id: number;
+  uuid_id?: string | null;  // UUID for linking with pipelines
+  vendor?: string | null;
+  product_category?: string | null;
+  sub_category?: string | null;
+  product_name?: string | null;
+  packing?: string | null;
+  typical_application?: string | null;
+  product_description?: string | null;
+  hs_code?: string | null;
+  price?: number | null;
+  industry?: string | null;
+  sector?: string | null;
+  partner_id?: string | null;
+}
+
+export interface ChemicalFullDataListResponse {
+  chemicals: ChemicalFullData[];
+  total: number;
+}
+
+export interface ChemicalFullDataCreate {
+  vendor?: string | null;
+  product_category?: string | null;
+  sub_category?: string | null;
+  product_name?: string | null;
+  packing?: string | null;
+  typical_application?: string | null;
+  product_description?: string | null;
+  hs_code?: string | null;
+  price?: number | null;
+  industry?: string | null;
+  sector?: string | null;
+  partner_id?: string | null;
+}
+
+export async function fetchChemicalFullData(params?: {
+  limit?: number;
+  offset?: number;
+  sector?: string;
+  industry?: string;
+  vendor?: string;
+  product_category?: string;
+  sub_category?: string;
+}) {
+  const res = await api.get<ChemicalFullDataListResponse>("/pms/chemical-full-data", { params });
+  return res.data;
+}
+
+export async function createChemicalFullData(data: ChemicalFullDataCreate & { id: number }) {
+  const res = await api.post<ChemicalFullData>("/pms/chemical-full-data", data);
+  return res.data;
+}
+
+export async function updateChemicalFullData(
+  id: number,
+  data: ChemicalFullDataUpdate
+) {
+  const res = await api.put<ChemicalFullData>(`/pms/chemical-full-data/${id}`, data);
+  return res.data;
+}
+
+export async function deleteChemicalFullData(id: number) {
+  await api.delete(`/pms/chemical-full-data/${id}`);
+}
+
+export async function fetchSectors() {
+  const res = await api.get<string[]>("/pms/chemical-full-data/options/sectors");
+  return res.data;
+}
+
+export async function fetchIndustries() {
+  const res = await api.get<string[]>("/pms/chemical-full-data/options/industries");
+  return res.data;
+}
+
+export async function fetchProductNames() {
+  const res = await api.get<string[]>("/pms/chemical-full-data/options/product-names");
+  return res.data;
+}
+
+export async function fetchProductCategoriesFullData() {
+  const res = await api.get<string[]>("/pms/chemical-full-data/options/product-categories");
+  return res.data;
+}
+
+export async function fetchSubCategoriesFullData() {
+  const res = await api.get<string[]>("/pms/chemical-full-data/options/sub-categories");
   return res.data;
 }
 
@@ -565,7 +644,7 @@ export interface DashboardMetrics {
 // SALES PIPELINE API
 // =============================
 
-// Pipeline Stages (union type)
+// Pipeline Stages (union type) – must match backend PIPELINE_STAGES
 export type PipelineStage =
   | "Lead ID"
   | "Discovery"
@@ -573,7 +652,8 @@ export type PipelineStage =
   | "Validation"
   | "Proposal"
   | "Confirmation"
-  | "Closed";
+  | "Closed"
+  | "Lost";
 
 export type Currency = "ETB" | "KES" | "USD" | "EUR";
 export type Forex = "LeanChems" | "Client";
@@ -633,6 +713,8 @@ export interface SalesPipelineCreate {
   business_unit?: BusinessUnit | null;
   incoterm?: Incoterm | null;
   metadata?: Record<string, any> | null;
+  // Optional vendor name from partner_chemicals (we'll store it in metadata on the backend)
+  vendor_name?: string | null;
 }
 
 export interface SalesPipelineUpdate {

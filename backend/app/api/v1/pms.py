@@ -46,6 +46,10 @@ from app.models.pms import (
     PartnerChemicalCreate,
     PartnerChemicalUpdate,
     PartnerChemicalListResponse,
+    ChemicalFullData,
+    ChemicalFullDataCreate,
+    ChemicalFullDataUpdate,
+    ChemicalFullDataListResponse,
 )
 from app.services.pms_service import (
     list_chemical_types,
@@ -88,6 +92,17 @@ from app.services.pms_service import (
     get_all_vendors,
     get_all_product_categories,
     get_all_sub_categories,
+    list_chemical_full_data,
+    count_chemical_full_data,
+    create_chemical_full_data,
+    get_chemical_full_data_by_id,
+    update_chemical_full_data,
+    delete_chemical_full_data,
+    get_all_sectors,
+    get_all_industries,
+    get_all_product_names,
+    get_all_product_categories_from_full_data,
+    get_all_sub_categories_from_full_data,
 )
 from app.services.file_service import upload_file_to_supabase, ensure_bucket_exists
 from app.dependencies import get_current_user
@@ -677,7 +692,7 @@ async def delete_partner_chemical_endpoint(partner_chemical_id: str):
 
 class QuotationProductRequest(BaseModel):
     product_name: str
-    brand_name: str
+    vendor_name: str  # Changed from brand_name to vendor_name
     unit_price: float
     quantity: float
 
@@ -710,7 +725,7 @@ async def generate_quotation_endpoint(request: QuotationRequest = Body(...)):
         products = [
             {
                 "product_name": p.product_name,
-                "brand_name": p.brand_name,
+                "vendor_name": p.vendor_name,  # Changed from brand_name to vendor_name
                 "unit_price": p.unit_price,
                 "quantity": p.quantity,
             }
@@ -756,6 +771,135 @@ async def generate_quotation_endpoint(request: QuotationRequest = Body(...)):
     except Exception as e:
         logger.error(f"Error generating quotation: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to generate quotation: {str(e)}")
+
+
+# =============================
+# CHEMICAL FULL DATA
+# =============================
+
+
+@router.get("/chemical-full-data", response_model=ChemicalFullDataListResponse)
+async def get_chemical_full_data(
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    sector: Optional[str] = Query(None),
+    industry: Optional[str] = Query(None),
+    vendor: Optional[str] = Query(None),
+    product_category: Optional[str] = Query(None),
+    sub_category: Optional[str] = Query(None),
+):
+    """List chemical_full_data with optional filters."""
+    try:
+        chemicals = list_chemical_full_data(
+            limit=limit,
+            offset=offset,
+            sector=sector,
+            industry=industry,
+            vendor=vendor,
+            product_category=product_category,
+            sub_category=sub_category,
+        )
+        total = count_chemical_full_data(
+            sector=sector,
+            industry=industry,
+            vendor=vendor,
+            product_category=product_category,
+            sub_category=sub_category,
+        )
+        return ChemicalFullDataListResponse(chemicals=chemicals, total=total)
+    except Exception as e:
+        logger.exception("Error fetching chemical_full_data")
+        raise HTTPException(status_code=500, detail=f"Error fetching chemical_full_data: {str(e)}")
+
+
+@router.post("/chemical-full-data", response_model=ChemicalFullData, status_code=201)
+async def create_chemical_full_data_endpoint(body: ChemicalFullDataCreate):
+    """Create a new chemical_full_data record."""
+    try:
+        return create_chemical_full_data(body)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error creating chemical_full_data: {str(e)}")
+
+
+@router.get("/chemical-full-data/{chemical_id}", response_model=ChemicalFullData)
+async def get_chemical_full_data_by_id_endpoint(chemical_id: int):
+    """Get a single chemical_full_data by ID."""
+    chemical = get_chemical_full_data_by_id(chemical_id)
+    if not chemical:
+        raise HTTPException(status_code=404, detail="Chemical not found")
+    return chemical
+
+
+@router.put("/chemical-full-data/{chemical_id}", response_model=ChemicalFullData)
+async def update_chemical_full_data_endpoint(
+    chemical_id: int, body: ChemicalFullDataUpdate
+):
+    """Update a chemical_full_data record."""
+    try:
+        return update_chemical_full_data(chemical_id, body)
+    except Exception as e:
+        logger.exception("Error updating chemical_full_data")
+        raise HTTPException(
+            status_code=500, detail=f"Error updating chemical_full_data: {str(e)}"
+        )
+
+
+@router.delete("/chemical-full-data/{chemical_id}", status_code=204)
+async def delete_chemical_full_data_endpoint(chemical_id: int):
+    """Delete a chemical_full_data record."""
+    try:
+        delete_chemical_full_data(chemical_id)
+        return None
+    except Exception as e:
+        logger.exception("Error deleting chemical_full_data")
+        raise HTTPException(
+            status_code=500, detail=f"Error deleting chemical_full_data: {str(e)}"
+        )
+
+
+@router.get("/chemical-full-data/options/sectors", response_model=List[str])
+async def get_sectors():
+    """Get all unique sectors."""
+    try:
+        return get_all_sectors()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching sectors: {str(e)}")
+
+
+@router.get("/chemical-full-data/options/industries", response_model=List[str])
+async def get_industries():
+    """Get all unique industries."""
+    try:
+        return get_all_industries()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching industries: {str(e)}")
+
+
+@router.get("/chemical-full-data/options/product-names", response_model=List[str])
+async def get_product_names():
+    """Get all unique product names."""
+    try:
+        return get_all_product_names()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching product names: {str(e)}")
+
+
+@router.get("/chemical-full-data/options/product-categories", response_model=List[str])
+async def get_product_categories_full_data():
+    """Get all unique product categories from chemical_full_data."""
+    try:
+        return get_all_product_categories_from_full_data()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching product categories: {str(e)}")
+
+
+@router.get("/chemical-full-data/options/sub-categories", response_model=List[str])
+async def get_sub_categories_full_data():
+    """Get all unique sub categories from chemical_full_data."""
+    try:
+        return get_all_sub_categories_from_full_data()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching sub categories: {str(e)}")
 
 
  

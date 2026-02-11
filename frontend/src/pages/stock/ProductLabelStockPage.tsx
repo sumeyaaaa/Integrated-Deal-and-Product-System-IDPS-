@@ -17,7 +17,7 @@ import {
   fetchChemicalTypes,
   fetchTDS,
   fetchCustomers,
-  fetchPartners,
+  fetchPartnerChemicals,
   fetchStockMovements,
   createStockMovement,
   updateStockMovement,
@@ -32,7 +32,7 @@ import {
   ChemicalType,
   Tds,
   Customer,
-  Partner,
+  PartnerChemical,
 } from "../../services/api";
 
 export function ProductLabelStockPage() {
@@ -42,7 +42,8 @@ export function ProductLabelStockPage() {
   const [chemicalTypes, setChemicalTypes] = useState<ChemicalType[]>([]);
   const [tdsList, setTdsList] = useState<Tds[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
-  const [partners, setPartners] = useState<Partner[]>([]);
+  // Use partner_chemicals as suppliers/vendors
+  const [partners, setPartners] = useState<PartnerChemical[]>([]);
   const [selectedProduct, setSelectedProduct] = useState<ChemicalType | null>(null);
   const [selectedTds, setSelectedTds] = useState<Tds | null>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
@@ -247,11 +248,11 @@ export function ProductLabelStockPage() {
       const [chemicalTypesRes, customersRes, partnersRes] = await Promise.all([
         fetchChemicalTypes({ limit: 1000 }),
         fetchCustomers({ limit: 1000 }),
-        fetchPartners({ limit: 1000 }),
+        fetchPartnerChemicals({ limit: 1000 }),
       ]);
       setChemicalTypes(chemicalTypesRes.chemicals || []);
       setCustomers(customersRes.customers);
-      setPartners(partnersRes.partners);
+      setPartners(partnersRes.partner_chemicals);
     } catch (err: any) {
       console.error(err);
       setError(err?.response?.data?.detail ?? err?.message ?? "Failed to load data");
@@ -909,60 +910,6 @@ export function ProductLabelStockPage() {
             {/* Add/Edit Form */}
             {showAddForm && (
               <>
-                {/* TDS Selection */}
-                <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-6">
-                  <label className="block text-sm font-medium text-slate-700 mb-2">
-                    Select Brand (TDS) *
-                  </label>
-                  <select
-                    value={selectedTds?.id || ""}
-                    onChange={async (e) => {
-                      const tds = tdsList.find((t) => t.id === e.target.value);
-                      setSelectedTds(tds || null);
-                      setStockProductId(null); // Reset product ID when TDS changes
-                      // Update formData brand when TDS is selected
-                      // Combine brand and grade to match the display format
-                      if (tds) {
-                        const displayBrand = tds.brand || "";
-                        const fullBrand = tds.grade ? `${displayBrand} -- ${tds.grade}` : displayBrand;
-                        setFormData({
-                          ...formData,
-                          brand: fullBrand || null,
-                          tds_id: tds.id || null,
-                        });
-                        // Explicitly load movements by brand when TDS is selected
-                        await loadStockMovementsByBrandWithTds(tds);
-                      } else {
-                        setFormData({
-                          ...formData,
-                          brand: null,
-                          tds_id: null,
-                        });
-                        setStockMovements([]);
-                      }
-                    }}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                    required
-                  >
-                    <option value="">-- Select Brand --</option>
-                    {tdsList.map((tds) => {
-                      // Combine brand and grade for display (matching what user expects)
-                      const displayBrand = tds.brand || "Unnamed Brand";
-                      const fullBrand = tds.grade ? `${displayBrand} -- ${tds.grade}` : displayBrand;
-                      return (
-                        <option key={tds.id} value={tds.id}>
-                          {fullBrand}
-                        </option>
-                      );
-                    })}
-                  </select>
-                  {tdsList.length === 0 && (
-                    <p className="text-sm text-slate-500 mt-1">
-                      No brands available for this chemical type. You can still proceed with stock entry.
-                    </p>
-                  )}
-                </div>
-
                 {/* Transaction Type Selection */}
                 <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-6">
                   <label className="block text-sm font-medium text-slate-700 mb-2">
@@ -1051,16 +998,16 @@ export function ProductLabelStockPage() {
                         setFormData({
                           ...formData,
                           supplier_id: supplier?.id || null,
-                          supplier_name: supplier?.partner || null,
+                          supplier_name: supplier?.vendor || null,
                         });
                       }}
                       className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                       required
-                    >
+                      >
                       <option value="">-- Select Supplier --</option>
                       {partners.map((partner) => (
                         <option key={partner.id} value={partner.id}>
-                          {partner.partner || "Unknown"} {partner.partner_country ? `(${partner.partner_country})` : ""}
+                          {partner.vendor || "Unknown"} {partner.country ? `(${partner.country})` : ""}
                         </option>
                       ))}
                     </select>

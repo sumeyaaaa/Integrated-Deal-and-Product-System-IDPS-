@@ -64,7 +64,15 @@ async def get_current_employee_info(
         if not email:
             raise HTTPException(status_code=400, detail="User email not found")
         
-        result = supabase.table("employees").select("email, role, name").eq("email", email.lower().strip()).execute()
+        email_lower = email.lower().strip()
+        result = supabase.table("employees").select("email, role, name").eq("email", email_lower).execute()
+        
+        # Debug logging for local development
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"Checking employee status for email: {email_lower}")
+        logger.info(f"Supabase URL: {supabase.url if hasattr(supabase, 'url') else 'N/A'}")
+        logger.info(f"Query result: {result.data if result.data else 'No data'}")
         
         if result.data and len(result.data) > 0:
             employee = result.data[0]
@@ -76,9 +84,10 @@ async def get_current_employee_info(
                 "user_id": user.get("id"),
             }
         else:
+            # More helpful error message
             raise HTTPException(
                 status_code=403,
-                detail="Your email is not registered as an employee"
+                detail=f"Your email ({email_lower}) is not registered as an employee. Please contact an administrator to add you to the employees table."
             )
     except HTTPException:
         raise
